@@ -18,12 +18,14 @@ interface HistoryCalendarProps {
   appData: AppData;
   onLogChange: () => void;
   onNavigateToGenerator: () => void;
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
 export default function HistoryCalendar({
   appData,
   onLogChange,
-  onNavigateToGenerator
+  onNavigateToGenerator,
+  showToast
 }: HistoryCalendarProps) {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
   const [selectedDateStr, setSelectedDateStr] = useState<string>('');
@@ -170,7 +172,7 @@ export default function HistoryCalendar({
   // 快捷一键保存
   const handleQuickSave = async () => {
     if (!selectedDateStr || !quickTitle.trim() || !quickContent.trim()) {
-      alert('请输入日志标题和内容！');
+      showToast('请输入日志标题和内容！', 'error');
       return;
     }
 
@@ -187,9 +189,10 @@ export default function HistoryCalendar({
 
     const res = await saveLog(selectedDateStr, logData);
     if (res.success) {
+      showToast(`🎉 ${selectedDateStr} 日报保存成功，已同步写入本地 db.json 数据库！`, 'success');
       onLogChange();
     } else {
-      alert('保存失败！');
+      showToast('❌ 保存失败，请确认后端 API 服务已正常开启！', 'error');
     }
   };
 
@@ -199,11 +202,12 @@ export default function HistoryCalendar({
     if (confirm(`确定要删除 ${selectedDateStr} 的工作日志吗？`)) {
       const res = await deleteLog(selectedDateStr);
       if (res.success) {
+        showToast(`${selectedDateStr} 的工作日志已删除。`, 'info');
         onLogChange();
         setQuickTitle('');
         setQuickContent('');
       } else {
-        alert('删除失败！');
+        showToast('删除失败！', 'error');
       }
     }
   };
@@ -212,6 +216,7 @@ export default function HistoryCalendar({
   const copyText = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
     setCopiedField(field);
+    showToast(`${field === 'title' ? '标题' : '内容'}已成功复制到剪贴板`, 'info');
     setTimeout(() => setCopiedField(null), 1500);
   };
 

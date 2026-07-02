@@ -5,9 +5,10 @@ import { AppData, saveSettings, importAllData } from '../utils/storage';
 interface SettingsProps {
   appData: AppData;
   onSaveSuccess: () => void;
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export default function Settings({ appData, onSaveSuccess }: SettingsProps) {
+export default function Settings({ appData, onSaveSuccess, showToast }: SettingsProps) {
   const [job, setJob] = useState<string>('frontend');
   const [tone, setTone] = useState<string>('professional');
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(50);
@@ -38,10 +39,11 @@ export default function Settings({ appData, onSaveSuccess }: SettingsProps) {
 
     if (res.success) {
       setSaveStatus(true);
+      showToast('🎉 个性化参数配置保存成功！已更新本地设置。', 'success');
       onSaveSuccess();
       setTimeout(() => setSaveStatus(false), 2000);
     } else {
-      alert('保存设置失败！');
+      showToast('❌ 保存配置失败，请确认后端 API 服务已正常开启！', 'error');
     }
   };
 
@@ -58,7 +60,7 @@ export default function Settings({ appData, onSaveSuccess }: SettingsProps) {
       linkElement.setAttribute('download', exportFileDefaultName);
       linkElement.click();
     } catch (e) {
-      alert('导出数据备份失败！');
+      showToast('❌ 导出备份数据失败！', 'error');
     }
   };
 
@@ -83,15 +85,17 @@ export default function Settings({ appData, onSaveSuccess }: SettingsProps) {
           const res = await importAllData(parsed);
           if (res.success) {
             setImportStatus('success');
+            showToast('🎉 备份数据已导入，本地历史及配置还原成功！', 'success');
             onSaveSuccess();
             setTimeout(() => setImportStatus('idle'), 2000);
           } else {
             setImportStatus('error');
+            showToast('❌ 备份数据导入失败，请检查服务状态。', 'error');
             setTimeout(() => setImportStatus('idle'), 2000);
           }
         }
       } catch (err) {
-        alert('解析备份文件失败，请确保您选择的是由系统导出的正确备份 JSON 文件！');
+        showToast('❌ 解析备份失败，请确保文件是由本系统导出的 JSON 备份文件！', 'error');
         setImportStatus('error');
         setTimeout(() => setImportStatus('idle'), 2000);
       }

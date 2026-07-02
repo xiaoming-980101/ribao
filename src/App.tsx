@@ -5,6 +5,7 @@ import HistoryCalendar from './components/HistoryCalendar';
 import WeeklyGenerator from './components/WeeklyGenerator';
 import Settings from './components/Settings';
 import { fetchAllData, AppData } from './utils/storage';
+import { CheckCircle2, AlertTriangle, Info } from 'lucide-react';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<string>('generator');
@@ -19,6 +20,16 @@ export default function App() {
       rollingDays: 7
     }
   });
+
+  // 全局 Toast 状态
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; show: boolean } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+    setToast({ message, type, show: true });
+    setTimeout(() => {
+      setToast((prev) => (prev ? { ...prev, show: false } : null));
+    }, 2800);
+  };
 
   // 加载数据
   const loadData = async () => {
@@ -58,6 +69,7 @@ export default function App() {
           <DailyGenerator
             appData={appData}
             onSaveSuccess={loadData}
+            showToast={showToast}
           />
         );
       case 'calendar':
@@ -66,6 +78,7 @@ export default function App() {
             appData={appData}
             onLogChange={loadData}
             onNavigateToGenerator={() => setCurrentTab('generator')}
+            showToast={showToast}
           />
         );
       case 'weekly':
@@ -79,6 +92,7 @@ export default function App() {
           <Settings
             appData={appData}
             onSaveSuccess={loadData}
+            showToast={showToast}
           />
         );
       default:
@@ -86,6 +100,7 @@ export default function App() {
           <DailyGenerator
             appData={appData}
             onSaveSuccess={loadData}
+            showToast={showToast}
           />
         );
     }
@@ -122,6 +137,18 @@ export default function App() {
       >
         {renderContent()}
       </main>
+
+      {/* 全局 Toast 通知渲染容器 */}
+      {toast && (
+        <div className="toast-container">
+          <div className={`toast-item ${toast.show ? 'show' : ''} ${toast.type}`}>
+            {toast.type === 'success' && <CheckCircle2 size={18} color="#10B981" />}
+            {toast.type === 'error' && <AlertTriangle size={18} color="#EF4444" />}
+            {toast.type === 'info' && <Info size={18} color="var(--accent-color)" />}
+            <span style={{ fontSize: '13px', fontWeight: '600' }}>{toast.message}</span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

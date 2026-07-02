@@ -12,9 +12,10 @@ import {
 interface DailyGeneratorProps {
   appData: AppData;
   onSaveSuccess: () => void;
+  showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export default function DailyGenerator({ appData, onSaveSuccess }: DailyGeneratorProps) {
+export default function DailyGenerator({ appData, onSaveSuccess, showToast }: DailyGeneratorProps) {
   // 当前选择的日期 (YYYY-MM-DD)
   const [selectedDate, setSelectedDate] = useState<string>('');
   
@@ -224,6 +225,7 @@ export default function DailyGenerator({ appData, onSaveSuccess }: DailyGenerato
   const copyToClipboard = (text: string, fieldName: string) => {
     navigator.clipboard.writeText(text);
     setCopiedField(fieldName);
+    showToast(`${fieldName === 'title' ? '日志名称' : '日志内容'}已成功复制到剪贴板`, 'info');
     setTimeout(() => setCopiedField(null), 1500);
   };
 
@@ -231,12 +233,13 @@ export default function DailyGenerator({ appData, onSaveSuccess }: DailyGenerato
   const copyAllFieldsText = () => {
     const text = `日志名称：${title}\n工时(h)：${hours}\n日志日期：${selectedDate}\n部门协作：${cooperation ? '是' : '否'}\n工作难点：${difficulty ? '是' : '否'}\n日志内容：\n${content}`;
     copyToClipboard(text, 'all');
+    showToast('全套日报表单字段已一键复制', 'success');
   };
 
   // 保存到本地数据库
   const handleSave = async () => {
     if (!title.trim() || !content.trim()) {
-      alert('日志名称和内容不能为空！');
+      showToast('日志名称和内容不能为空！', 'error');
       return;
     }
 
@@ -270,10 +273,12 @@ export default function DailyGenerator({ appData, onSaveSuccess }: DailyGenerato
         if (next.length > 8) next.shift();
         return next;
       });
+      showToast('🎉 日报已成功保存并物理落盘至 db.json！', 'success');
       onSaveSuccess();
       setTimeout(() => setSaveStatus('idle'), 2000);
     } else {
       setSaveStatus('error');
+      showToast('❌ 保存失败，请确认后端 API 服务已正常开启！', 'error');
       setTimeout(() => setSaveStatus('idle'), 2000);
     }
   };
@@ -449,6 +454,7 @@ export default function DailyGenerator({ appData, onSaveSuccess }: DailyGenerato
                 onClick={() => {
                   navigator.clipboard.writeText(content);
                   setCopiedField('ai_prompt_btn');
+                  showToast('🤖 提示词复制成功！正在前往豆包...', 'success');
                   setTimeout(() => setCopiedField(null), 1500);
                   window.open('https://www.doubao.com', '_blank');
                 }}
