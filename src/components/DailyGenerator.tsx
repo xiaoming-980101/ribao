@@ -24,6 +24,9 @@ export default function DailyGenerator({ appData, onSaveSuccess }: DailyGenerato
   // 用户的简短任务输入
   const [userInput, setUserInput] = useState<string>('');
 
+  // 临时生成历史缓存（解决未存盘连续生成时的查重检测）
+  const [sessionHistory, setSessionHistory] = useState<string[]>([]);
+
   // 生成的表单字段
   const [title, setTitle] = useState<string>('');
   const [hours, setHours] = useState<number>(8);
@@ -81,19 +84,30 @@ export default function DailyGenerator({ appData, onSaveSuccess }: DailyGenerato
     let maxSim = 0;
     let simDate = '';
 
-    // 对比过去 30 天内除当天以外的日志
+    // 1. 对比过去 30 天内除当天以外的日志
     Object.entries(appData.logs).forEach(([date, log]) => {
       if (date === selectedDate) return;
       
-      // 限制在30天窗口内
-      const diffTime = Math.abs(new Date(selectedDate).getTime() - new Date(date).getTime());
+      const todayDate = new Date(selectedDate);
+      const logDate = new Date(date);
+      const diffTime = Math.abs(todayDate.getTime() - logDate.getTime());
       const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
       if (diffDays > 30) return;
 
       const sim = calculateSimilarity(content, log.content);
       if (sim > maxSim) {
         maxSim = sim;
-        simDate = date;
+        simDate = `${date} 已保存的日志`;
+      }
+    });
+
+    // 2. 对比本会话连续生成历史（防止点“智能生成”产生雷同）
+    sessionHistory.forEach((histContent, idx) => {
+      if (histContent === content) return; // 排除自身比对
+      const sim = calculateSimilarity(content, histContent);
+      if (sim > maxSim) {
+        maxSim = sim;
+        simDate = `刚才生成的第 ${idx + 1} 稿草稿`;
       }
     });
 
@@ -104,34 +118,69 @@ export default function DailyGenerator({ appData, onSaveSuccess }: DailyGenerato
   // 一键生成/扩写日志
   const handleGenerate = () => {
     const job = appData.settings.job || 'frontend';
-    if (mode === 'task') {
-      const result = expandUserInput(userInput, job);
-      setTitle(result.title);
-      setHours(result.hours);
-      setCooperation(result.cooperation);
-      setDifficulty(result.difficulty);
-      setContent(result.content);
-    } else if (mode === 'idle') {
-      const result = generateRandomFrontendDaily(selectedDate, false, job);
-      setTitle(result.title);
-      setHours(result.hours);
-      setCooperation(result.cooperation);
-      setDifficulty(result.difficulty);
-      setContent(result.content);
-    } else if (mode === 'study') {
-      const result = generateRandomFrontendDaily(selectedDate, true, job);
-      setTitle(result.title);
-      setHours(result.hours);
-      setCooperation(result.cooperation);
-      setDifficulty(result.difficulty);
-      setContent(result.content);
-    } else {
+    if (mode === 'ai_prompt') {
       const prompt = generateAIPrompt(userInput, job);
       setTitle('从豆包复制结果粘贴至此');
       setHours(8);
       setCooperation(false);
       setDifficulty(false);
       setContent(prompt);
+      return;
+    }
+
+    // 撞针防重机制：在后台循环随机生成最多 10 次，找到相似度最低的那一稿
+    let bestResult: any = null;
+    let lowestSim = 100;
+
+    for (let attempts = 0; attempts < 10; attempts++) {
+      let tempResult: any;
+      if (mode === 'task') {
+        // 加盐随机种子，微调扩写生成结果
+        tempResult = expandUserInput(userInput + (attempts > 0 ? ` #${attempts}` : ''), job);
+      } else if (mode === 'idle') {
+        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job);
+      } else {
+        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, job);
+      }
+
+      // 实时计算该临时结果与 logs 以及 sessionHistory 的最大相似度
+      let maxSim = 0;
+      Object.entries(appData.logs).forEach(([date, log]) => {
+        if (date === selectedDate) return;
+        const sim = calculateSimilarity(tempResult.content, log.content);
+        if (sim > maxSim) maxSim = sim;
+      });
+      sessionHistory.forEach((histContent) => {
+        const sim = calculateSimilarity(tempResult.content, histContent);
+        if (sim > maxSim) maxSim = sim;
+      });
+
+      // 如果雷同率低于 30%，立刻采纳
+      if (maxSim < 30) {
+        bestResult = tempResult;
+        break;
+      }
+
+      // 否则挑选雷同率最低的一个
+      if (maxSim < lowestSim) {
+        lowestSim = maxSim;
+        bestResult = tempResult;
+      }
+    }
+
+    if (bestResult) {
+      setTitle(bestResult.title);
+      setHours(bestResult.hours);
+      setCooperation(bestResult.cooperation);
+      setDifficulty(bestResult.difficulty);
+      setContent(bestResult.content);
+
+      // 将本次的生成放入会话生成缓存中以供后续防重对比
+      setSessionHistory((prev) => {
+        const next = [...prev, bestResult.content];
+        if (next.length > 8) next.shift(); // 仅缓存最近的 8 次生成
+        return next;
+      });
     }
   };
 
@@ -216,6 +265,11 @@ export default function DailyGenerator({ appData, onSaveSuccess }: DailyGenerato
     const res = await saveLog(selectedDate, logData);
     if (res.success) {
       setSaveStatus('success');
+      setSessionHistory((prev) => {
+        const next = [...prev, content.trim()];
+        if (next.length > 8) next.shift();
+        return next;
+      });
       onSaveSuccess();
       setTimeout(() => setSaveStatus('idle'), 2000);
     } else {
