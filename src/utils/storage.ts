@@ -204,3 +204,45 @@ export async function importAllData(data: AppData): Promise<{ success: boolean; 
     return { success: true, isOffline: true };
   }
 }
+
+/**
+ * 还原出厂设置，清空所有日志与配置
+ */
+export async function resetAllData(): Promise<{ success: boolean }> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/reset`, {
+      method: 'POST',
+      signal: AbortSignal.timeout(1500)
+    });
+    if (res.ok) {
+      // 清空本地缓存
+      memoryData = {
+        logs: {},
+        settings: {
+          job: 'frontend',
+          tone: 'professional',
+          similarityThreshold: 50,
+          rollingDays: 7
+        }
+      };
+      setLocalStorageData(memoryData);
+      return { success: true };
+    }
+  } catch (e) {
+    console.warn('后端重置失败，降级本地 LocalStorage 清理');
+  }
+
+  // 离线模式降级清理
+  localStorage.removeItem('winner_daily_data');
+  memoryData = {
+    logs: {},
+    settings: {
+      job: 'frontend',
+      tone: 'professional',
+      similarityThreshold: 50,
+      rollingDays: 7
+    }
+  };
+  setLocalStorageData(memoryData);
+  return { success: true };
+}

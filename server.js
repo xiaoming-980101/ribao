@@ -121,6 +121,24 @@ app.post('/api/settings', (req, res) => {
   }
 });
 
+// API: 恢复出厂设置，清空所有数据
+app.post('/api/reset', (req, res) => {
+  const defaultData = {
+    logs: {},
+    settings: {
+      job: 'frontend',
+      tone: 'professional',
+      similarityThreshold: 50,
+      rollingDays: 7
+    }
+  };
+  if (writeDB(defaultData)) {
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: '重置数据库失败' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`Backend Database Server is running on http://localhost:${PORT}`);
 });

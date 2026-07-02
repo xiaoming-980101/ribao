@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save } from 'lucide-react';
-import { AppData, saveSettings, importAllData } from '../utils/storage';
+import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save, Trash2 } from 'lucide-react';
+import { AppData, saveSettings, importAllData, resetAllData } from '../utils/storage';
 
 interface SettingsProps {
   appData: AppData;
@@ -17,6 +17,31 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 恢复出厂设置（清空所有数据，供分发或重置）
+  const handleResetData = async () => {
+    const confirm1 = window.confirm(
+      '⚠️ 危险操作警示：\n\n该操作将永久擦除您在本地保存的所有工作日志、周报历史以及岗位参数配置，将其彻底恢复到出厂初始状态！\n\n此操作不可撤销，您真的确定要继续吗？'
+    );
+    if (!confirm1) return;
+
+    const confirm2 = window.confirm(
+      '⚠️ 请再次确认：\n\n在清空数据前，强烈建议您在右侧点击“下载全部数据备份 (JSON)”保存您的本地日志备份。\n\n您是否已经做好了备份，并确定要抹除所有本地数据？'
+    );
+    if (!confirm2) return;
+
+    const res = await resetAllData();
+    if (res.success) {
+      showToast('🎉 系统已成功恢复出厂设置，所有数据已清空！', 'success');
+      onSaveSuccess();
+      // 延迟 1.5 秒重新加载页面，让所有状态归零
+      setTimeout(() => {
+        window.location.reload();
+      }, 1500);
+    } else {
+      showToast('❌ 重置失败，请检查服务连接状态。', 'error');
+    }
+  };
 
   // 初始化设置值
   useEffect(() => {
@@ -295,6 +320,41 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
               </span>
             </button>
           </div>
+        </div>
+
+        {/* 3. 系统重置与分发（危险操作） */}
+        <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '4px solid #EF4444' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px' }}>
+            <Trash2 size={18} color="#EF4444" />
+            <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#EF4444' }}>系统重置与纯净分发</h3>
+          </div>
+
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
+            如果您想将本程序打包分享给其他人使用，或者需要清除本地的全部填报记录，您可以在此一键“恢复出厂设置”。
+            系统将彻底清空本地数据库中的历史数据，并将岗位配置恢复到默认状态（建议在操作前先在上方下载备份）。
+          </p>
+
+          <button
+            onClick={handleResetData}
+            className="clickable"
+            style={{
+              alignSelf: 'flex-start',
+              padding: '10px 20px',
+              borderRadius: '8px',
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              color: '#EF4444',
+              fontSize: '13px',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              marginTop: '4px'
+            }}
+          >
+            <Trash2 size={16} />
+            <span>🧹 恢复出厂设置（清空全部数据）</span>
+          </button>
         </div>
       </div>
     </div>
