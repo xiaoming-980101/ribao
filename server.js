@@ -23,7 +23,11 @@ function initDB() {
         job: 'frontend',
         tone: 'professional',
         similarityThreshold: 50,
-        rollingDays: 7
+        rollingDays: 7,
+        aiEnabled: false,
+        aiApiKey: '',
+        aiApiUrl: 'https://openrouter.ai/api/v1',
+        aiModel: 'qwen/qwen-3-coder:free'
       }
     };
     fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2), 'utf8');
@@ -102,7 +106,7 @@ app.delete('/api/logs/:date', (req, res) => {
 
 // API: 保存用户配置
 app.post('/api/settings', (req, res) => {
-  const { job, tone, similarityThreshold, rollingDays, customTemplates } = req.body;
+  const { job, tone, similarityThreshold, rollingDays, aiEnabled, aiApiKey, aiApiUrl, aiModel, customTemplates } = req.body;
   const data = readDB();
 
   data.settings = {
@@ -111,6 +115,10 @@ app.post('/api/settings', (req, res) => {
     tone: tone || data.settings.tone,
     similarityThreshold: similarityThreshold !== undefined ? similarityThreshold : data.settings.similarityThreshold,
     rollingDays: rollingDays !== undefined ? Number(rollingDays) : data.settings.rollingDays || 7,
+    aiEnabled: aiEnabled !== undefined ? !!aiEnabled : data.settings.aiEnabled || false,
+    aiApiKey: aiApiKey !== undefined ? aiApiKey : data.settings.aiApiKey || '',
+    aiApiUrl: aiApiUrl !== undefined ? aiApiUrl : data.settings.aiApiUrl || 'https://openrouter.ai/api/v1',
+    aiModel: aiModel !== undefined ? aiModel : data.settings.aiModel || 'qwen/qwen-3-coder:free',
     customTemplates: customTemplates || data.settings.customTemplates
   };
 
@@ -129,13 +137,112 @@ app.post('/api/reset', (req, res) => {
       job: 'frontend',
       tone: 'professional',
       similarityThreshold: 50,
-      rollingDays: 7
+      rollingDays: 7,
+      aiEnabled: false,
+      aiApiKey: '',
+      aiApiUrl: 'https://openrouter.ai/api/v1',
+      aiModel: 'qwen/qwen-3-coder:free'
     }
   };
   if (writeDB(defaultData)) {
     res.json({ success: true });
   } else {
     res.status(500).json({ error: '重置数据库失败' });
+  }
+});
+
+// API: 在线调用 AI 生成日报
+app.post('/api/generate', async (req, res) => {
+  const { userInput, job } = req.body;
+  const data = readDB();
+  const settings = data.settings;
+
+  if (!settings.aiEnabled || !settings.aiApiKey) {
+    return res.status(400).json({ error: '在线 AI 服务未启用或 API 密钥未配置！' });
+  }
+
+  const jobName = job === 'designer' ? 'UI/UX 视觉设计师' : '前端开发工程师';
+  const tasksText = (userInput && userInput.trim())
+    ? `【${userInput.trim()}】`
+    : '“日常基础代码库维护与细节调优（今天没有特定大需求上线，主要进行排错与代码整理自测）”';
+
+  const examples = job === 'designer' ? `
+* ❌ 反面例子（太虚太浮夸，HR一眼看穿是AI）：
+“针对产品核心展示模块进行了全方位的交互体验设计与视觉包装升级，构建了高复用的视觉规范，显著提升了页面在跨终端环境下的用户体感和开发对接效率。”
+* 🟢 正面例子（非常写实自然，工作量饱和）：
+“跟产品对了对下期需求的线框图，理了理几个复杂的页面跳转逻辑。下午把这期核心的高保真视觉设计稿细化了下，顺便把本地图层重新命名归档整理了下，给云盘腾了腾空间。”
+` : `
+* ❌ 反面例子（太虚太浮夸，HR一眼看穿是AI）：
+“深度重构了系统核心列表渲染组件，引入了基于虚拟滚动的高效异步加载算法，成功缩减了打包体积，显著优化了页面在低端机型下的首屏交互流畅度。”
+* 🟢 正面例子（非常写实自然，工作量饱和）：
+“把首页列表数据多的时候有点卡顿的问题给优化了下，改成了按需懒加载渲染。顺手把项目打包的配置文件精简了下，清理了几个过期不用的包，在本地跑了下回归测试。”
+`;
+
+  const systemPrompt = `你是一个在公司里默默搬砖、踏实干活的专业 ${jobName}。请帮我写一份日常工作日志。`;
+  const userPrompt = `今天我做的工作是：${tasksText}。请帮我写一份日常工作日志。
+
+要求：
+1. 语气必须高度口语化、平实写实，像真人随手写的流水账。绝对不要有任何浮夸的 AI 腔调和官腔（多用“改了改”、“调了调”、“排查了”、“修了一下”、“对了一下”，绝对不要用“重构了冗余逻辑”、“显著提升了性能”、“优化了打包体积”等浮夸词汇）。
+2. 工作量显得“饱满且充实”。如果我给出的工作内容比较简短，请帮我在合理的专业范围内进行步骤展开（比如把“写了登录”合理扩展拆解为：画页面布局、处理表单参数校验、联调接口以及本地跑自测等）。
+3. 增加一点点口语化的工作细节（比如“把 Figma 的间距标注仔细对了一遍”、“把控制台里的几个警告日志清理了一下”等），让日报显得极其真实。
+4. 字数控制在 100 - 150 字之间，分条列出（2-3条即可）。
+5. 顺便帮我起一个 15 字以内的极简日志标题。
+
+请参考并对比以下写作风格：
+${examples}
+
+请严格按照以下格式直接输出（不要有任何多余的 Markdown 代码块或前后缀解释说明）：
+标题：[极简日志标题]
+内容：
+1. [第一条工作内容，大白话口语，写实有细节]
+2. [第二条工作内容，大白话口语，写实有细节]`;
+
+  try {
+    const apiUrl = settings.aiApiUrl.endsWith('/') ? settings.aiApiUrl + 'chat/completions' : settings.aiApiUrl + '/chat/completions';
+    
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${settings.aiApiKey}`
+      },
+      body: JSON.stringify({
+        model: settings.aiModel,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 500
+      })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`API 平台响应错误: ${response.status} - ${errText}`);
+    }
+
+    const apiData = await response.json();
+    const rawText = apiData.choices[0].message.content.trim();
+
+    // 解析
+    let title = '日常开发工作';
+    let content = rawText;
+
+    const titleMatch = rawText.match(/标题：\s*(.+)/);
+    const contentMatch = rawText.match(/内容：\s*([\s\S]+)/);
+
+    if (titleMatch && titleMatch[1]) {
+      title = titleMatch[1].trim();
+    }
+    if (contentMatch && contentMatch[1]) {
+      content = contentMatch[1].trim();
+    }
+
+    res.json({ success: true, title, content });
+  } catch (error) {
+    console.error('在线 AI 生成请求失败:', error);
+    res.status(500).json({ error: error.message || '大模型生成请求失败' });
   }
 });
 

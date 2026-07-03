@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save, Trash2 } from 'lucide-react';
+import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save, Trash2, Cpu } from 'lucide-react';
 import { AppData, saveSettings, importAllData, resetAllData } from '../utils/storage';
 
 interface SettingsProps {
@@ -13,6 +13,10 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
   const [tone, setTone] = useState<string>('professional');
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(50);
   const [rollingDays, setRollingDays] = useState<number>(7);
+  const [aiEnabled, setAiEnabled] = useState<boolean>(false);
+  const [aiApiKey, setAiApiKey] = useState<string>('');
+  const [aiApiUrl, setAiApiUrl] = useState<string>('https://openrouter.ai/api/v1');
+  const [aiModel, setAiModel] = useState<string>('qwen/qwen-3-coder:free');
   const [saveStatus, setSaveStatus] = useState<boolean>(false);
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
@@ -50,6 +54,10 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       setTone(appData.settings.tone || 'professional');
       setSimilarityThreshold(appData.settings.similarityThreshold || 50);
       setRollingDays(appData.settings.rollingDays || 7);
+      setAiEnabled(appData.settings.aiEnabled || false);
+      setAiApiKey(appData.settings.aiApiKey || '');
+      setAiApiUrl(appData.settings.aiApiUrl || 'https://openrouter.ai/api/v1');
+      setAiModel(appData.settings.aiModel || 'qwen/qwen-3-coder:free');
     }
   }, [appData.settings]);
 
@@ -59,7 +67,11 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       job,
       tone,
       similarityThreshold,
-      rollingDays
+      rollingDays,
+      aiEnabled,
+      aiApiKey,
+      aiApiUrl,
+      aiModel
     });
 
     if (res.success) {
@@ -244,6 +256,112 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
           >
             {saveStatus ? <Check size={14} /> : <Save size={14} />}
             <span>{saveStatus ? '参数配置已生效' : '保存配置参数'}</span>
+          </button>
+        </div>
+
+        {/* 1.5. 在线 AI 智能大模型对接 */}
+        <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px', marginBottom: '8px' }}>
+            <Cpu size={18} color="var(--accent-color)" />
+            <h3 style={{ fontSize: '16px', fontWeight: '700' }}>🤖 在线 AI 智能大模型联调 (免人工复制)</h3>
+          </div>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {/* 是否启用 */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <input
+                type="checkbox"
+                id="aiEnabled"
+                checked={aiEnabled}
+                onChange={(e) => setAiEnabled(e.target.checked)}
+                style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+              />
+              <label htmlFor="aiEnabled" style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                开启在线大模型生成模式（开启后，点击“智能生成”将直连 AI API，无需手动复制 Prompt）
+              </label>
+            </div>
+
+            {aiEnabled && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '3px solid var(--accent-color)', paddingLeft: '16px', marginTop: '4px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                  {/* API Base URL */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>API Base URL (基准请求地址)</label>
+                    <input
+                      type="text"
+                      value={aiApiUrl}
+                      onChange={(e) => setAiApiUrl(e.target.value)}
+                      placeholder="例如: https://openrouter.ai/api/v1"
+                    />
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      兼容 OpenAI 格式的大模型平台接口地址。
+                    </span>
+                  </div>
+
+                  {/* API Key */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>API Key (密钥)</label>
+                    <input
+                      type="password"
+                      value={aiApiKey}
+                      onChange={(e) => setAiApiKey(e.target.value)}
+                      placeholder="sk-..."
+                    />
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                      调用 API 密钥。数据保存在本地物理文件 db.json 中。
+                    </span>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                  {/* 推荐免费模型下拉框 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>预设大模型选择</label>
+                    <select
+                      value={aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                    >
+                      <option value="qwen/qwen-3-coder:free">🟢 Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)</option>
+                      <option value="meta-llama/llama-3.3-70b-instruct:free">🟢 Meta: Llama 3.3 70B Instruct (免费)</option>
+                      <option value="google/gemma-2-9b-it:free">🟢 Google: Gemma 2 9B (免费)</option>
+                      <option value="custom">⚙️ 自定义输入模型 ID (在右侧填写)</option>
+                    </select>
+                  </div>
+
+                  {/* 自定义模型名称 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>模型 ID (API Request Model Name)</label>
+                    <input
+                      type="text"
+                      value={aiModel === 'custom' ? '' : aiModel}
+                      onChange={(e) => setAiModel(e.target.value)}
+                      placeholder="如: qwen/qwen-3-coder:free"
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            onClick={handleSaveSettings}
+            className="clickable"
+            style={{
+              alignSelf: 'flex-end',
+              padding: '10px 24px',
+              borderRadius: '8px',
+              background: saveStatus ? '#10B981' : 'var(--accent-gradient)',
+              color: '#ffffff',
+              fontSize: '13px',
+              fontWeight: '600',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              marginTop: '4px'
+            }}
+          >
+            {saveStatus ? <Check size={14} /> : <Save size={14} />}
+            <span>{saveStatus ? '在线大模型已连通生效' : '保存大模型接口配置'}</span>
           </button>
         </div>
 

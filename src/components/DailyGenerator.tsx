@@ -116,27 +116,14 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
     setSimilarDate(simDate);
   }, [content, selectedDate, appData.logs]);
 
-  // 一键生成/扩写日志
-  const handleGenerate = () => {
-    const job = appData.settings.job || 'frontend';
-    if (mode === 'ai_prompt') {
-      const prompt = generateAIPrompt(userInput, job);
-      setTitle('从豆包复制结果粘贴至此');
-      setHours(8);
-      setCooperation(false);
-      setDifficulty(false);
-      setContent(prompt);
-      return;
-    }
-
-    // 撞针防重机制：在后台循环随机生成最多 10 次，找到相似度最低的那一稿
+  // 本地碰撞防重生成
+  const generateLocally = (job: string) => {
     let bestResult: any = null;
     let lowestSim = 100;
 
     for (let attempts = 0; attempts < 10; attempts++) {
       let tempResult: any;
       if (mode === 'task') {
-        // 加盐随机种子，微调扩写生成结果
         tempResult = expandUserInput(userInput + (attempts > 0 ? ` #${attempts}` : ''), job);
       } else if (mode === 'idle') {
         tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job);
@@ -144,7 +131,6 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
         tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, job);
       }
 
-      // 实时计算该临时结果与 logs 以及 sessionHistory 的最大相似度
       let maxSim = 0;
       Object.entries(appData.logs).forEach(([date, log]) => {
         if (date === selectedDate) return;
@@ -156,13 +142,11 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
         if (sim > maxSim) maxSim = sim;
       });
 
-      // 如果雷同率低于 30%，立刻采纳
       if (maxSim < 30) {
         bestResult = tempResult;
         break;
       }
 
-      // 否则挑选雷同率最低的一个
       if (maxSim < lowestSim) {
         lowestSim = maxSim;
         bestResult = tempResult;
@@ -176,13 +160,77 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
       setDifficulty(bestResult.difficulty);
       setContent(bestResult.content);
 
-      // 将本次的生成放入会话生成缓存中以供后续防重对比
       setSessionHistory((prev) => {
         const next = [...prev, bestResult.content];
-        if (next.length > 8) next.shift(); // 仅缓存最近的 8 次生成
+        if (next.length > 8) next.shift();
         return next;
       });
     }
+  };
+
+  // 一键生成/扩写日志
+  const handleGenerate = async () => {
+    const job = appData.settings.job || 'frontend';
+    if (mode === 'ai_prompt') {
+      const prompt = generateAIPrompt(userInput, job);
+      setTitle('从豆包复制结果粘贴至此');
+      setHours(8);
+      setCooperation(false);
+      setDifficulty(false);
+      setContent(prompt);
+      return;
+    }
+
+    // 在线 AI 智能生成
+    if (appData.settings.aiEnabled && appData.settings.aiApiKey) {
+      setSaveStatus('saving'); // 借用保存 loading 状态
+      showToast(`🤖 正在联调大模型 [${appData.settings.aiModel.split('/').pop() || appData.settings.aiModel}] 生成日报...`, 'info');
+      try {
+        const response = await fetch('http://localhost:3001/api/generate', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            userInput,
+            job
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.json();
+          throw new Error(errData.error || '联调接口请求失败');
+        }
+
+        const resData = await response.json();
+        if (resData.success) {
+          setTitle(resData.title);
+          setHours(8);
+          // 智能推导部门协作与工作难点
+          setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
+          setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
+          setContent(resData.content);
+          showToast('🎉 在线大模型日报生成成功！已填充表单。', 'success');
+
+          // 加入去重会话缓存
+          setSessionHistory((prev) => {
+            const next = [...prev, resData.content];
+            if (next.length > 8) next.shift();
+            return next;
+          });
+        }
+      } catch (error: any) {
+        console.error('在线 AI 生成失败:', error);
+        showToast(`❌ AI 生成失败: ${error.message || error}，已为您自动降级至本地生成。`, 'error');
+        generateLocally(job);
+      } finally {
+        setSaveStatus('idle');
+      }
+      return;
+    }
+
+    // 本地引擎生成
+    generateLocally(job);
   };
 
   // 智能微调（重新生成混淆，仅限日常/学习模式下或作为任务的补充优化）

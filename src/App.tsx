@@ -17,7 +17,11 @@ export default function App() {
       job: 'frontend',
       tone: 'professional',
       similarityThreshold: 50,
-      rollingDays: 7
+      rollingDays: 7,
+      aiEnabled: false,
+      aiApiKey: '',
+      aiApiUrl: 'https://openrouter.ai/api/v1',
+      aiModel: 'qwen/qwen-3-coder:free'
     }
   });
 

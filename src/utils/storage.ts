@@ -15,6 +15,10 @@ export interface Settings {
   tone: string;
   similarityThreshold: number;
   rollingDays: number;    // 滚动补录期限天数
+  aiEnabled: boolean;     // 是否启用在线 AI 智能生成
+  aiApiKey: string;       // AI 平台的 API 密钥
+  aiApiUrl: string;       // AI 平台的 API 基准地址
+  aiModel: string;        // 使用的模型标识
   customTemplates?: string;
 }
 
@@ -30,7 +34,11 @@ const DEFAULT_SETTINGS: Settings = {
   job: 'frontend',
   tone: 'professional',
   similarityThreshold: 50,
-  rollingDays: 7          // 默认允许补录最近7天
+  rollingDays: 7,          // 默认允许补录最近7天
+  aiEnabled: false,        // 默认不开启，由用户自主配置打通
+  aiApiKey: '',
+  aiApiUrl: 'https://openrouter.ai/api/v1',
+  aiModel: 'qwen/qwen-3-coder:free' // 默认推荐 Qwen3 Coder 480B 免费版大模型
 };
 
 // 内存中的临时数据缓存，降级时使用
@@ -222,7 +230,11 @@ export async function resetAllData(): Promise<{ success: boolean }> {
           job: 'frontend',
           tone: 'professional',
           similarityThreshold: 50,
-          rollingDays: 7
+          rollingDays: 7,
+          aiEnabled: false,
+          aiApiKey: '',
+          aiApiUrl: 'https://openrouter.ai/api/v1',
+          aiModel: 'qwen/qwen-3-coder:free'
         }
       };
       setLocalStorageData(memoryData);
@@ -240,7 +252,11 @@ export async function resetAllData(): Promise<{ success: boolean }> {
       job: 'frontend',
       tone: 'professional',
       similarityThreshold: 50,
-      rollingDays: 7
+      rollingDays: 7,
+      aiEnabled: false,
+      aiApiKey: '',
+      aiApiUrl: 'https://openrouter.ai/api/v1',
+      aiModel: 'qwen/qwen-3-coder:free'
     }
   };
   setLocalStorageData(memoryData);
