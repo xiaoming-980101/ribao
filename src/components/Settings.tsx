@@ -54,33 +54,51 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       setTone(appData.settings.tone || 'professional');
       setSimilarityThreshold(appData.settings.similarityThreshold || 50);
       setRollingDays(appData.settings.rollingDays || 7);
-      setAiEnabled(appData.settings.aiEnabled || false);
-      setAiApiKey(appData.settings.aiApiKey || '');
-      setAiApiUrl(appData.settings.aiApiUrl || 'https://openrouter.ai/api/v1');
-      setAiModel(appData.settings.aiModel || 'qwen/qwen-3-coder:free');
+    }
+
+    // 从本机独立的 LocalStorage 恢复个人大模型配置
+    const rawAISettings = localStorage.getItem('winner_daily_ai_settings');
+    if (rawAISettings) {
+      try {
+        const parsed = JSON.parse(rawAISettings);
+        setAiEnabled(parsed.aiEnabled || false);
+        setAiApiKey(parsed.aiApiKey || '');
+        setAiApiUrl(parsed.aiApiUrl || 'https://openrouter.ai/api/v1');
+        setAiModel(parsed.aiModel || 'qwen/qwen-3-coder:free');
+      } catch (e) {
+        console.error('初始化本地大模型配置失败:', e);
+      }
     }
   }, [appData.settings]);
 
   // 保存设置
   const handleSaveSettings = async () => {
+    // 1. 常规公共配置（岗位、天数）保存至后端数据库
     const res = await saveSettings({
       job,
       tone,
       similarityThreshold,
-      rollingDays,
-      aiEnabled,
-      aiApiKey,
-      aiApiUrl,
-      aiModel
+      rollingDays
     });
+
+    // 2. 敏感的个人大模型密钥，安全地存于用户本机的浏览器 LocalStorage 中
+    localStorage.setItem(
+      'winner_daily_ai_settings',
+      JSON.stringify({
+        aiEnabled,
+        aiApiKey,
+        aiApiUrl,
+        aiModel
+      })
+    );
 
     if (res.success) {
       setSaveStatus(true);
-      showToast('🎉 个性化参数配置保存成功！已更新本地设置。', 'success');
+      showToast('🎉 个性化参数及个人 AI 配置保存成功！', 'success');
       onSaveSuccess();
       setTimeout(() => setSaveStatus(false), 2000);
     } else {
-      showToast('❌ 保存配置失败，请确认后端 API 服务已正常开启！', 'error');
+      showToast('❌ 保存业务配置失败，请确认后端 API 服务已正常开启！', 'error');
     }
   };
 

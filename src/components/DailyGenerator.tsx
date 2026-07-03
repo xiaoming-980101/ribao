@@ -181,10 +181,21 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
       return;
     }
 
+    // 读取保存在用户本机 LocalStorage 里的独立大模型 Key 偏好
+    const rawAISettings = localStorage.getItem('winner_daily_ai_settings');
+    let aiSettings = { aiEnabled: false, aiApiKey: '', aiApiUrl: 'https://openrouter.ai/api/v1', aiModel: 'qwen/qwen-3-coder:free' };
+    if (rawAISettings) {
+      try {
+        aiSettings = JSON.parse(rawAISettings);
+      } catch (e) {
+        console.error('解析本地大模型密钥失败:', e);
+      }
+    }
+
     // 在线 AI 智能生成
-    if (appData.settings.aiEnabled && appData.settings.aiApiKey) {
+    if (aiSettings.aiEnabled && aiSettings.aiApiKey) {
       setSaveStatus('saving'); // 借用保存 loading 状态
-      showToast(`🤖 正在联调大模型 [${appData.settings.aiModel.split('/').pop() || appData.settings.aiModel}] 生成日报...`, 'info');
+      showToast(`🤖 正在联调大模型 [${aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}] 生成日报...`, 'info');
       try {
         const response = await fetch('http://localhost:3001/api/generate', {
           method: 'POST',
@@ -193,7 +204,10 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
           },
           body: JSON.stringify({
             userInput,
-            job
+            job,
+            aiApiKey: aiSettings.aiApiKey,
+            aiApiUrl: aiSettings.aiApiUrl,
+            aiModel: aiSettings.aiModel
           })
         });
 
