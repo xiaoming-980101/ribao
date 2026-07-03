@@ -180,12 +180,11 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
         </p>
       </div>
 
-      <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
+      <div className="two-col-layout">
         {/* 左侧：周选择与日报预览 */}
         <div
-          className="glass-panel"
+          className="glass-panel two-col-left"
           style={{
-            flex: '1.2',
             padding: '24px',
             display: 'flex',
             flexDirection: 'column',
@@ -300,9 +299,8 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
 
         {/* 右侧：生成结果周报展示 */}
         <div
-          className="glass-panel"
+          className="glass-panel two-col-right"
           style={{
-            flex: '1.3',
             padding: '24px',
             display: 'flex',
             flexDirection: 'column',

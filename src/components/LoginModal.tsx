@@ -118,8 +118,10 @@ export default function LoginModal({ onLoginSuccess, showToast }: LoginModalProp
 
       {/* 登录注册主磨砂卡片 */}
       <div 
+        className="login-card-wrapper"
         style={{
-          width: '400px',
+          width: '100%',
+          maxWidth: '400px',
           borderRadius: '16px',
           background: 'rgba(255, 255, 255, 0.02)',
           backdropFilter: 'blur(24px)',

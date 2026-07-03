@@ -304,7 +304,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
             <h3 style={{ fontSize: '16px', fontWeight: '700' }}>智能模板风格参数</h3>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          <div className="settings-grid">
             {/* 工作岗位 */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
               <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>预设工作岗位</label>
@@ -404,7 +404,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
 
         {/* 1.5. 在线 AI 智能大模型对接 */}
         <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px', marginBottom: '8px' }}>
+          <div className="panel-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Cpu size={18} color="var(--accent-color)" />
               <h3 style={{ fontSize: '16px', fontWeight: '700' }}>🤖 在线 AI 智能大模型联调 (免人工复制)</h3>
@@ -451,7 +451,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
 
             {aiEnabled && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '3px solid var(--accent-color)', paddingLeft: '16px', marginTop: '4px' }}>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                <div className="settings-grid">
                   {/* API Base URL */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                     <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>API Base URL (基准请求地址)</label>
@@ -490,7 +490,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'end' }}>
+                <div className="settings-grid" style={{ alignItems: 'end' }}>
                   {/* 可搜索大模型下拉框组件 */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'relative' }}>
                     <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>自选大模型选择与检索 (免费置顶)</label>

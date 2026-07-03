@@ -271,12 +271,12 @@ export default function HistoryCalendar({
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
       {/* 绩效看板状态栏 */}
       <div
-        className="glass-panel"
+        className="glass-panel monitor-board"
         style={{
           padding: '16px 24px',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center',
+          alignItems: 'flex-start',
           flexWrap: 'wrap',
           gap: '16px',
           borderLeft: stats.missingCount > 0 ? '4px solid #EF4444' : '4px solid #10B981',
@@ -391,9 +391,9 @@ export default function HistoryCalendar({
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
+      <div className="two-col-layout">
         {/* 左侧：日历主体 */}
-        <div className="glass-panel" style={{ flex: 1.5, padding: '24px' }}>
+        <div className="glass-panel two-col-left" style={{ padding: '24px' }}>
           {/* 日历头部 */}
           <div
             style={{
@@ -580,9 +580,8 @@ export default function HistoryCalendar({
 
         {/* 右侧：补录/详情卡片 */}
         <div
-          className="glass-panel"
+          className="glass-panel two-col-right"
           style={{
-            flex: 1.2,
             padding: '24px',
             display: 'flex',
             flexDirection: 'column',

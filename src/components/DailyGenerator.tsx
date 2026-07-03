@@ -320,8 +320,14 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       return;
     }
 
-    // 在线 AI 智能生成 (直接使用 state 中同步好的设置)
-    if (aiSettings.aiEnabled && aiSettings.aiApiKey) {
+    // 在线 AI 智能生成
+    if (aiSettings.aiEnabled) {
+      // 未配置 Key 时拦截，引导用户去配置
+      if (!aiSettings.aiApiKey) {
+        showToast('⚠️ 已开启 AI 模式，但尚未配置 API Key！请前往《个性化配置》填写您的 OpenRouter Key。', 'error');
+        if (onNavigateToTab) onNavigateToTab('settings');
+        return;
+      }
       setSaveStatus('saving'); // 借用保存 loading 状态
       showToast(`🤖 正在联调大模型 [${aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}] 生成日报...`, 'info');
       try {
@@ -506,17 +512,15 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         </div>
       </div>
 
-      <div style={{ display: 'flex', gap: '20px', alignItems: 'stretch' }}>
+      <div className="two-col-layout">
         {/* 左侧：输入与控制面板 */}
         <div
-          className="glass-panel"
+          className="glass-panel two-col-left"
           style={{
-            flex: '1',
             padding: '24px',
             display: 'flex',
             flexDirection: 'column',
-            gap: '20px',
-            maxWidth: '480px'
+            gap: '20px'
           }}
         >
           {/* AI 激活横幅，如果当前用户的 settings 里未配置 Key 则进行强力引导 */}
@@ -777,7 +781,23 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                   ) : '🔴 未启用大模型 (降级本地引擎)'}
                 </span>
               </div>
-              {aiSettings.aiEnabled && (
+              {/* AI 状态行：已开启但未配置 Key 时显示警告，否则展示模型切换按钮 */}
+              {aiSettings.aiEnabled && !aiSettings.aiApiKey ? (
+                <div
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: '6px',
+                    padding: '4px 10px', borderRadius: '6px',
+                    background: 'rgba(239,68,68,0.08)',
+                    border: '1px solid rgba(239,68,68,0.25)',
+                    cursor: 'pointer',
+                    fontSize: '11px', color: '#EF4444', fontWeight: '600'
+                  }}
+                  onClick={() => onNavigateToTab && onNavigateToTab('settings')}
+                  title="点击前往配置 API Key"
+                >
+                  ⚠️ 未配置 API Key，点此设置
+                </div>
+              ) : aiSettings.aiEnabled && (
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                   <button
                     onClick={() => handleQuickChangeModel('openrouter/free')}
@@ -1043,9 +1063,8 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
 
         {/* 右侧：生成结果与表单模拟卡片 */}
         <div
-          className="glass-panel"
+          className="glass-panel two-col-right"
           style={{
-            flex: '1.3',
             padding: '24px',
             display: 'flex',
             flexDirection: 'column',
@@ -1150,7 +1169,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             </div>
 
             {/* 2. 工时 与 日期 */}
-            <div style={{ display: 'flex', gap: '20px' }}>
+            <div className="form-row-wrap">
               <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
                 <label style={{ width: '90px', fontSize: '13px', fontWeight: '600', color: '#EAB308', textAlign: 'right' }}>工时(h):</label>
                 <input
@@ -1174,7 +1193,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             </div>
 
             {/* 3. 部门协作 与 工作难点 */}
-            <div style={{ display: 'flex', gap: '40px', paddingLeft: '102px' }}>
+            <div className="checkbox-row" style={{ paddingLeft: '4px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <input
                   type="checkbox"
