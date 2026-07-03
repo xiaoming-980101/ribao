@@ -15,6 +15,7 @@
   "settings": {
     "job": "frontend",
     "tone": "professional",
-    "similarityThreshold": 50
+    "similarityThreshold": 50,
+    "rollingDays": 7
   }
 }

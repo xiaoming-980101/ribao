@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save, Trash2, Cpu } from 'lucide-react';
+import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save, Trash2, Cpu, RefreshCw } from 'lucide-react';
 import { AppData, saveSettings, importAllData, resetAllData } from '../utils/storage';
 
 interface SettingsProps {
@@ -17,10 +17,71 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
   const [aiApiKey, setAiApiKey] = useState<string>('');
   const [aiApiUrl, setAiApiUrl] = useState<string>('https://openrouter.ai/api/v1');
   const [aiModel, setAiModel] = useState<string>('qwen/qwen-3-coder:free');
+  
+  // 大模型动态同步与可搜索下拉框所需状态
+  const [modelList, setModelList] = useState<{ id: string; name: string; isFree: boolean }[]>([]);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+
   const [saveStatus, setSaveStatus] = useState<boolean>(false);
   const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 恢复大模型本地列表缓存
+  useEffect(() => {
+    const cached = localStorage.getItem('winner_daily_cached_models');
+    if (cached) {
+      try {
+        setModelList(JSON.parse(cached));
+      } catch (e) {
+        console.error('加载缓存大模型列表失败:', e);
+      }
+    } else {
+      // 预设默认免费大模型
+      setModelList([
+        { id: 'qwen/qwen-3-coder:free', name: 'Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)', isFree: true },
+        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct (免费)', isFree: true },
+        { id: 'google/gemma-2-9b-it:free', name: 'Google: Gemma 2 9B (免费)', isFree: true },
+        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen: Qwen 2.5 72B Instruct (免费)', isFree: true }
+      ]);
+    }
+  }, []);
+
+  // 一键同步云端大模型列表
+  const handleSyncModels = async () => {
+    if (!aiApiKey) {
+      showToast('⚠️ 请先填写大模型 API Key 密钥，再点击同步！', 'error');
+      return;
+    }
+    setIsSyncing(true);
+    showToast('🔄 正在同步云端大模型可用型号列表...', 'info');
+    try {
+      const response = await fetch('http://localhost:3001/api/models', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ aiApiKey, aiApiUrl })
+      });
+      
+      if (!response.ok) {
+        const errData = await response.json();
+        throw new Error(errData.error || '请求失败');
+      }
+
+      const resData = await response.json();
+      if (resData.success && resData.models) {
+        setModelList(resData.models);
+        localStorage.setItem('winner_daily_cached_models', JSON.stringify(resData.models));
+        showToast(`🎉 成功同步 ${resData.models.length} 个可用模型！免费大模型已置顶推荐。`, 'success');
+      }
+    } catch (err: any) {
+      console.error('同步模型列表失败:', err);
+      showToast(`❌ 同步模型失败: ${err.message || err}，请核对密钥及 API 接口地址。`, 'error');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
 
   // 恢复出厂设置（清空所有数据，供分发或重置）
   const handleResetData = async () => {
@@ -279,9 +340,34 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
 
         {/* 1.5. 在线 AI 智能大模型对接 */}
         <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px', marginBottom: '8px' }}>
-            <Cpu size={18} color="var(--accent-color)" />
-            <h3 style={{ fontSize: '16px', fontWeight: '700' }}>🤖 在线 AI 智能大模型联调 (免人工复制)</h3>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px', marginBottom: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Cpu size={18} color="var(--accent-color)" />
+              <h3 style={{ fontSize: '16px', fontWeight: '700' }}>🤖 在线 AI 智能大模型联调 (免人工复制)</h3>
+            </div>
+            
+            {aiEnabled && (
+              <button
+                onClick={handleSyncModels}
+                disabled={isSyncing}
+                className="clickable"
+                style={{
+                  padding: '6px 14px',
+                  borderRadius: '6px',
+                  background: 'rgba(59, 130, 246, 0.1)',
+                  border: '1px solid rgba(59, 130, 246, 0.3)',
+                  color: 'var(--accent-color)',
+                  fontSize: '12px',
+                  fontWeight: '600',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <RefreshCw size={12} className={isSyncing ? 'spin-animation' : ''} />
+                <span>{isSyncing ? '正在拉取...' : '🔄 同步大模型列表'}</span>
+              </button>
+            )}
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -326,32 +412,170 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                       placeholder="sk-..."
                     />
                     <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      调用 API 密钥。数据保存在本地物理文件 db.json 中。
+                      调用 API 密钥。数据保存在您本机浏览器的 LocalStorage 中。
                     </span>
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                  {/* 推荐免费模型下拉框 */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>预设大模型选择</label>
-                    <select
-                      value={aiModel}
-                      onChange={(e) => setAiModel(e.target.value)}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'end' }}>
+                  {/* 可搜索大模型下拉框组件 */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'relative' }}>
+                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>自选大模型选择与检索 (免费置顶)</label>
+                    
+                    {/* 模拟 Select */}
+                    <div 
+                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                      className="clickable"
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        background: 'rgba(255,255,255,0.03)',
+                        border: '1px solid var(--glass-border)',
+                        borderRadius: '8px',
+                        padding: '10px 14px',
+                        color: 'var(--text-primary)',
+                        fontSize: '13px',
+                        cursor: 'pointer',
+                        minHeight: '42px',
+                        boxSizing: 'border-box'
+                      }}
                     >
-                      <option value="qwen/qwen-3-coder:free">🟢 Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)</option>
-                      <option value="meta-llama/llama-3.3-70b-instruct:free">🟢 Meta: Llama 3.3 70B Instruct (免费)</option>
-                      <option value="google/gemma-2-9b-it:free">🟢 Google: Gemma 2 9B (免费)</option>
-                      <option value="custom">⚙️ 自定义输入模型 ID (在右侧填写)</option>
-                    </select>
+                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }}>
+                        {aiModel ? (
+                          <>
+                            {modelList.find(m => m.id === aiModel)?.isFree ? '🟢 [免费] ' : '🔴 [付费] '}
+                            {modelList.find(m => m.id === aiModel)?.name || aiModel}
+                          </>
+                        ) : '点击选择模型...'}
+                      </span>
+                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{isDropdownOpen ? '▲' : '▼'}</span>
+                    </div>
+
+                    {/* 下拉悬浮层 */}
+                    {isDropdownOpen && (
+                      <div 
+                        style={{
+                          position: 'absolute',
+                          bottom: '100%',
+                          left: 0,
+                          right: 0,
+                          zIndex: 1000,
+                          background: '#111827',
+                          border: '1px solid var(--glass-border)',
+                          borderRadius: '10px',
+                          boxShadow: '0 -10px 25px rgba(0,0,0,0.5)',
+                          padding: '12px',
+                          marginBottom: '8px',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px',
+                          backdropFilter: 'blur(16px)',
+                          boxSizing: 'border-box'
+                        }}
+                      >
+                        {/* 搜索框 */}
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          placeholder="🔍 输入 free 或 qwen 等关键字检索模型..."
+                          onClick={(e) => e.stopPropagation()} // 防止冒泡关闭下拉框
+                          style={{
+                            width: '100%',
+                            boxSizing: 'border-box',
+                            background: 'rgba(0,0,0,0.3)',
+                            border: '1px solid var(--glass-border)',
+                            padding: '8px 12px',
+                            borderRadius: '6px',
+                            color: '#ffffff',
+                            fontSize: '13px'
+                          }}
+                        />
+
+                        {/* 模型过滤结果列表 */}
+                        <div 
+                          style={{
+                            maxHeight: '180px',
+                            overflowY: 'auto',
+                            display: 'flex',
+                            flexDirection: 'column',
+                            gap: '4px',
+                            marginTop: '4px'
+                          }}
+                        >
+                          {modelList
+                            .filter(m => 
+                              m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                              m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                              (searchQuery.toLowerCase() === 'free' && m.isFree)
+                            )
+                            .sort((a, b) => (a.isFree === b.isFree ? 0 : a.isFree ? -1 : 1))
+                            .length > 0 ? (
+                              modelList
+                                .filter(m => 
+                                  m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                                  m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                  (searchQuery.toLowerCase() === 'free' && m.isFree)
+                                )
+                                .sort((a, b) => (a.isFree === b.isFree ? 0 : a.isFree ? -1 : 1))
+                                .map((m) => (
+                                  <div
+                                    key={m.id}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setAiModel(m.id);
+                                      setIsDropdownOpen(false);
+                                      setSearchQuery('');
+                                    }}
+                                    className="clickable"
+                                    style={{
+                                      padding: '8px 10px',
+                                      borderRadius: '6px',
+                                      background: aiModel === m.id ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
+                                      border: aiModel === m.id ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
+                                      fontSize: '12px',
+                                      display: 'flex',
+                                      justifyContent: 'space-between',
+                                      alignItems: 'center',
+                                      cursor: 'pointer',
+                                      color: aiModel === m.id ? '#ffffff' : 'var(--text-secondary)'
+                                    }}
+                                  >
+                                    <span style={{ fontWeight: aiModel === m.id ? '700' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>
+                                      {m.name}
+                                    </span>
+                                    <span 
+                                      style={{
+                                        fontSize: '9px',
+                                        padding: '2px 5px',
+                                        borderRadius: '4px',
+                                        background: m.isFree ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                                        color: m.isFree ? '#10B981' : '#EF4444',
+                                        fontWeight: '700',
+                                        border: m.isFree ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)'
+                                      }}
+                                    >
+                                      {m.isFree ? 'FREE 免费' : '付费'}
+                                    </span>
+                                  </div>
+                                ))
+                            ) : (
+                              <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '11px' }}>
+                                未找到匹配的模型
+                              </div>
+                            )}
+                        </div>
+                      </div>
+                    )}
                   </div>
 
-                  {/* 自定义模型名称 */}
+                  {/* 自定义输入框兜底 */}
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>模型 ID (API Request Model Name)</label>
+                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>手动补录模型 ID (非必填)</label>
                     <input
                       type="text"
-                      value={aiModel === 'custom' ? '' : aiModel}
+                      value={aiModel}
                       onChange={(e) => setAiModel(e.target.value)}
                       placeholder="如: qwen/qwen-3-coder:free"
                     />

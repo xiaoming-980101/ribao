@@ -235,6 +235,54 @@ ${examples}
   }
 });
 
+// API: 动态拉取并同步大模型列表 (中转转发 /v1/models)
+app.post('/api/models', async (req, res) => {
+  const { aiApiKey, aiApiUrl } = req.body;
+  if (!aiApiKey) {
+    return res.status(400).json({ error: '请先填入 API 密钥以获取模型列表！' });
+  }
+
+  try {
+    const apiBaseUrl = aiApiUrl || 'https://openrouter.ai/api/v1';
+    const modelsUrl = apiBaseUrl.endsWith('/') ? apiBaseUrl + 'models' : apiBaseUrl + '/models';
+
+    const response = await fetch(modelsUrl, {
+      method: 'GET',
+      headers: {
+        'Authorization': `Bearer ${aiApiKey}`
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`获取模型列表失败: ${response.status}`);
+    }
+
+    const apiData = await response.json();
+    
+    // 清洗模型数据，标记免费模型
+    const models = (apiData.data || []).map(m => {
+      let isFree = false;
+      if (m.id.includes(':free') || m.id.includes('-free')) {
+        isFree = true;
+      }
+      if (m.pricing && Number(m.pricing.prompt) === 0 && Number(m.pricing.completion) === 0) {
+        isFree = true;
+      }
+      
+      return {
+        id: m.id,
+        name: m.name || m.id,
+        isFree
+      };
+    });
+
+    res.json({ success: true, models });
+  } catch (error) {
+    console.error('获取大模型列表失败:', error);
+    res.status(500).json({ error: error.message || '拉取大模型列表失败' });
+  }
+});
+
 // 前端路由通配托管 (支持 React 路由 SPA 刷新不报 404)
 app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
