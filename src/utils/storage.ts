@@ -19,6 +19,7 @@ export interface Settings {
   aiApiKey: string;       // AI 平台的 API 密钥
   aiApiUrl: string;       // AI 平台的 API 基准地址
   aiModel: string;        // 使用的模型标识
+  saveKeyToCloud?: boolean; // 是否允许在云端保存密钥
   customTemplates?: string;
 }
 

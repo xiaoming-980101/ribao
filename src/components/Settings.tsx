@@ -202,7 +202,8 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       aiApiKey: saveKeyToCloud ? aiApiKey : '', // 若用户不保存，后端强制落盘为空
       aiApiUrl,
       aiModel,
-      aiEnabled
+      aiEnabled,
+      saveKeyToCloud // 传给后端存盘，永久记住用户的安全保存偏好！
     });
 
     // 2. 敏感的个人大模型密钥，根据不同登录用户隔离缓存在本地 LocalStorage 中
