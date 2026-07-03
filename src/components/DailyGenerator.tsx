@@ -771,9 +771,9 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
                   marginBottom: '6px',
                   width: '280px',
                   borderRadius: '10px',
-                  background: 'var(--panel-bg)',
-                  backdropFilter: 'blur(16px)',
-                  border: '1px solid var(--glass-border)',
+                  background: 'rgba(21, 28, 44, 0.97)',
+                  backdropFilter: 'blur(20px)',
+                  border: '1px solid rgba(255, 255, 255, 0.15)',
                   boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
                   padding: '8px',
                   zIndex: 999
