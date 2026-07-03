@@ -48,6 +48,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
   const [aiApiKey, setAiApiKey] = useState<string>('');
   const [aiApiUrl, setAiApiUrl] = useState<string>('https://openrouter.ai/api/v1');
   const [aiModel, setAiModel] = useState<string>('qwen/qwen-3-coder:free');
+  const [saveKeyToCloud, setSaveKeyToCloud] = useState<boolean>(false);
   
   // 大模型动态同步与可搜索下拉框所需状态
   const [modelList, setModelList] = useState<{ id: string; name: string; isFree: boolean }[]>([]);
@@ -142,20 +143,31 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
 
   // 初始化设置值
   useEffect(() => {
+    const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
     if (appData.settings) {
       setJob(appData.settings.job || 'frontend');
       setTone(appData.settings.tone || 'professional');
       setSimilarityThreshold(appData.settings.similarityThreshold || 50);
       setRollingDays(appData.settings.rollingDays || 7);
+      
+      // 如果后端存有有效的 API Key，默认勾选“云端保存”
+      if (appData.settings.aiApiKey) {
+        setAiApiKey(appData.settings.aiApiKey);
+        setSaveKeyToCloud(true);
+      }
     }
 
-    // 从本机独立的 LocalStorage 恢复个人大模型配置
-    const rawAISettings = localStorage.getItem('winner_daily_ai_settings');
+    // 从本机隔离的 LocalStorage 恢复当前登录大模型配置
+    const rawAISettings = localStorage.getItem(`winner_daily_ai_settings_${currentLoggedUser}`);
     if (rawAISettings) {
       try {
         const parsed = JSON.parse(rawAISettings);
         setAiEnabled(parsed.aiEnabled || false);
-        setAiApiKey(parsed.aiApiKey || '');
+        // 如果后端没有 Key，但本地缓存有，说明之前用户只选择在本地缓存
+        if (!appData.settings?.aiApiKey && parsed.aiApiKey) {
+          setAiApiKey(parsed.aiApiKey);
+          setSaveKeyToCloud(false);
+        }
         setAiApiUrl(parsed.aiApiUrl || 'https://openrouter.ai/api/v1');
         setAiModel(parsed.aiModel || 'qwen/qwen-3-coder:free');
       } catch (e) {
@@ -166,32 +178,38 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
 
   // 保存设置
   const handleSaveSettings = async () => {
-    // 1. 常规公共配置（岗位、天数）保存至后端数据库
+    const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
+
+    // 1. 根据是否勾选云端保存，决定是否向后端数据库上传真实的 API Key (若不勾选则在云端强制物理擦除为空)
     const res = await saveSettings({
       job,
       tone,
       similarityThreshold,
-      rollingDays
+      rollingDays,
+      aiApiKey: saveKeyToCloud ? aiApiKey : '', // 若用户不保存，后端强制落盘为空
+      aiApiUrl,
+      aiModel,
+      aiEnabled
     });
 
-    // 2. 敏感的个人大模型密钥，安全地存于用户本机的浏览器 LocalStorage 中
-    localStorage.setItem(
-      'winner_daily_ai_settings',
-      JSON.stringify({
-        aiEnabled,
-        aiApiKey,
-        aiApiUrl,
-        aiModel
-      })
-    );
+    // 2. 敏感的个人大模型密钥，根据不同登录用户隔离缓存在本地 LocalStorage 中
+    const localConfig = {
+      aiEnabled,
+      aiApiKey,
+      aiApiUrl,
+      aiModel
+    };
+    localStorage.setItem(`winner_daily_ai_settings_${currentLoggedUser}`, JSON.stringify(localConfig));
+    // 兼容全局非隔离缓存，方便其他旧逻辑握手，但退出时统一擦除
+    localStorage.setItem('winner_daily_ai_settings', JSON.stringify(localConfig));
 
     if (res.success) {
       setSaveStatus(true);
-      showToast('🎉 个性化参数及个人 AI 配置保存成功！', 'success');
+      showToast('🎉 个性化参数及大模型配置已安全保存！', 'success');
       onSaveSuccess();
       setTimeout(() => setSaveStatus(false), 2000);
     } else {
-      showToast('❌ 保存业务配置失败，请确认后端 API 服务已正常开启！', 'error');
+      showToast('❌ 保存配置失败，请确认后端 API 服务已正常开启！', 'error');
     }
   };
 
@@ -443,9 +461,18 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                       onChange={(e) => setAiApiKey(e.target.value)}
                       placeholder="sk-..."
                     />
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      调用 API 密钥。数据保存在您本机浏览器的 LocalStorage 中。
-                    </span>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
+                      <input 
+                        type="checkbox" 
+                        id="saveKeyToCloud"
+                        checked={saveKeyToCloud}
+                        onChange={(e) => setSaveKeyToCloud(e.target.checked)}
+                        style={{ cursor: 'pointer', width: '14px', height: '14px' }}
+                      />
+                      <label htmlFor="saveKeyToCloud" style={{ fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}>
+                        💾 允许将 API 密钥安全备份在云端（可跨设备同步；若不勾选，密钥仅保存在当前浏览器，退出后彻底销毁）
+                      </label>
+                    </div>
                   </div>
                 </div>
 

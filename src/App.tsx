@@ -43,8 +43,14 @@ export default function App() {
 
   const handleLogout = () => {
     localStorage.removeItem('winner_daily_user');
+    // 彻底擦除该用户缓存在本地的敏感大模型 API 密钥，防范多账号共用浏览器时穿透泄露
+    if (username) {
+      localStorage.removeItem(`winner_daily_ai_settings_${username}`);
+    }
+    localStorage.removeItem('winner_daily_ai_settings');
+
     setUsername(null);
-    showToast('🚪 您已成功退出登录，账号数据已离线隔离。', 'info');
+    showToast('🚪 您已成功退出登录，敏感密钥与数据已彻底隔离擦除！', 'info');
     setAppData({
       logs: {},
       settings: {

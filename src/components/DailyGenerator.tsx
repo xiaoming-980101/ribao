@@ -64,6 +64,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   const [tone, setTone] = useState<string>('professional');
 
   // 大模型偏好快捷读取与快速切换
+  // 大模型偏好快捷读取与快速切换
   const [aiSettings, setAiSettings] = useState({
     aiEnabled: false,
     aiApiKey: '',
@@ -72,19 +73,36 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   });
 
   const loadAISettings = () => {
-    const raw = localStorage.getItem('winner_daily_ai_settings');
+    const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
+    const hasBackendKey = appData.settings?.aiApiKey;
+
+    const raw = localStorage.getItem(`winner_daily_ai_settings_${currentLoggedUser}`);
     if (raw) {
       try {
-        setAiSettings(JSON.parse(raw));
+        const parsed = JSON.parse(raw);
+        setAiSettings({
+          aiEnabled: appData.settings?.aiEnabled !== undefined ? appData.settings.aiEnabled : (parsed.aiEnabled || false),
+          aiApiKey: hasBackendKey ? appData.settings.aiApiKey : (parsed.aiApiKey || ''),
+          aiApiUrl: appData.settings?.aiApiUrl || parsed.aiApiUrl || 'https://openrouter.ai/api/v1',
+          aiModel: appData.settings?.aiModel || parsed.aiModel || 'qwen/qwen-3-coder:free'
+        });
+        return;
       } catch (e) {
         console.error('加载快捷大模型设置失败:', e);
       }
     }
+
+    setAiSettings({
+      aiEnabled: appData.settings?.aiEnabled || false,
+      aiApiKey: appData.settings?.aiApiKey || '',
+      aiApiUrl: appData.settings?.aiApiUrl || 'https://openrouter.ai/api/v1',
+      aiModel: appData.settings?.aiModel || 'qwen/qwen-3-coder:free'
+    });
   };
 
   useEffect(() => {
     loadAISettings();
-  }, []);
+  }, [appData.settings]);
 
   // 同步用户在主界面上临时更改的配置，静默向后端保存偏好
   const handleJobChange = async (newJob: string) => {
@@ -116,8 +134,12 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   };
 
   const handleQuickChangeModel = (newModel: string) => {
+    const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
     const nextSettings = { ...aiSettings, aiModel: newModel };
     setAiSettings(nextSettings);
+    
+    // 写入当前特定用户的本地隔离配置中
+    localStorage.setItem(`winner_daily_ai_settings_${currentLoggedUser}`, JSON.stringify(nextSettings));
     localStorage.setItem('winner_daily_ai_settings', JSON.stringify(nextSettings));
     showToast(`🎯 已快捷切换大模型为: ${newModel.split('/').pop() || newModel}`, 'success');
   };
@@ -129,8 +151,6 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
 
   // 初始化选择日期为今天 (当前系统时间 2026-07-02)
   useEffect(() => {
-    loadAISettings();
-
     // 根据后端 db.json 初始偏好同步组件 State 里的岗位与风格
     if (appData.settings) {
       setJob(appData.settings.job || 'frontend');
