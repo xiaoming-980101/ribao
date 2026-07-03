@@ -8,16 +8,31 @@ interface SettingsProps {
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-const RECOMMENDED_MODEL_IDS = [
-  'qwen/qwen-3-coder:free',
-  'qwen/qwen-3-coder',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'meta-llama/llama-3.3-70b-instruct',
-  'google/gemma-2-9b-it:free',
-  'google/gemma-2-9b-it',
-  'qwen/qwen-2.5-72b-instruct:free',
-  'qwen/qwen-2.5-72b-instruct'
-];
+// 智能识别核心免费推荐大模型 (对中文大白话生成效果最佳且免费的型号)
+const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) => {
+  const idLower = m.id.toLowerCase();
+  
+  // 必须是免费模型，且符合我们推荐的关键型号
+  if (m.isFree) {
+    // 1. Qwen 3 Coder 系列 (包含 qwen, 3, coder)
+    if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('coder')) {
+      return true;
+    }
+    // 2. Qwen 3 Next 系列 (包含 qwen, 3, next)
+    if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('next')) {
+      return true;
+    }
+    // 3. Llama 3.3 系列 (包含 llama, 3.3)
+    if (idLower.includes('llama') && idLower.includes('3.3')) {
+      return true;
+    }
+    // 4. Gemma 系列 (包含 gemma)
+    if (idLower.includes('gemma')) {
+      return true;
+    }
+  }
+  return false;
+};
 
 export default function Settings({ appData, onSaveSuccess, showToast }: SettingsProps) {
   const [job, setJob] = useState<string>('frontend');
@@ -456,7 +471,10 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                         {aiModel ? (
                           <>
                             {modelList.find(m => m.id === aiModel)?.isFree ? '🟢 [免费] ' : '🔴 [付费] '}
-                            {RECOMMENDED_MODEL_IDS.some(id => aiModel.toLowerCase().includes(id.toLowerCase())) ? '🔥 [推荐] ' : ''}
+                            {(() => {
+                              const found = modelList.find(m => m.id === aiModel);
+                              return found && checkIsRecommended(found) ? '🔥 [推荐] ' : '';
+                            })()}
                             {modelList.find(m => m.id === aiModel)?.name || aiModel}
                           </>
                         ) : '点击选择模型...'}
@@ -517,11 +535,11 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                           }}
                         >
                           {(() => {
-                            const getModelWeight = (m: { id: string; isFree: boolean }) => {
-                              const isRec = RECOMMENDED_MODEL_IDS.some(id => m.id.toLowerCase().includes(id.toLowerCase()));
+                            const getModelWeight = (m: { id: string; name: string; isFree: boolean }) => {
+                              const isRec = checkIsRecommended(m);
                               if (m.isFree && isRec) return 4; // 推荐免费置顶
                               if (m.isFree) return 3;          // 免费普通
-                              if (isRec) return 2;             // 推荐付费
+                              if (isRec) return 2;             // 推荐付费 (虽然目前设定无)
                               return 1;                        // 付费普通
                             };
 
@@ -535,7 +553,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
 
                             return filtered.length > 0 ? (
                               filtered.map((m) => {
-                                const isRec = RECOMMENDED_MODEL_IDS.some(id => m.id.toLowerCase().includes(id.toLowerCase()));
+                                const isRec = checkIsRecommended(m);
                                 return (
                                   <div
                                     key={m.id}
