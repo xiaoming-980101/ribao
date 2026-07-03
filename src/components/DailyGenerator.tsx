@@ -15,6 +15,21 @@ interface DailyGeneratorProps {
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+// 智能识别核心免费推荐大模型 (对中文大白话生成效果最佳且免费的型号)
+const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) => {
+  const idLower = m.id.toLowerCase();
+  if (idLower === 'openrouter/free' || idLower.includes('openrouter/free')) {
+    return true;
+  }
+  if (m.isFree) {
+    if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('coder')) return true;
+    if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('next')) return true;
+    if (idLower.includes('llama') && idLower.includes('3.3')) return true;
+    if (idLower.includes('gemma')) return true;
+  }
+  return false;
+};
+
 export default function DailyGenerator({ appData, onSaveSuccess, showToast }: DailyGeneratorProps) {
   // 当前选择的日期 (YYYY-MM-DD)
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -73,8 +88,34 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
     showToast(`🎯 已快捷切换大模型为: ${newModel.split('/').pop() || newModel}`, 'success');
   };
 
+  // 所有模型自选与搜索状态
+  const [modelList, setModelList] = useState<{ id: string; name: string; isFree: boolean }[]>([]);
+  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+
   // 初始化选择日期为今天 (当前系统时间 2026-07-02)
   useEffect(() => {
+    loadAISettings();
+
+    // 读取已缓存的云端完整模型列表供下拉搜索使用
+    const cached = localStorage.getItem('winner_daily_cached_models');
+    if (cached) {
+      try {
+        setModelList(JSON.parse(cached));
+      } catch (e) {
+        console.error('加载缓存大模型列表失败:', e);
+      }
+    } else {
+      // 预设默认大模型列表
+      setModelList([
+        { id: 'openrouter/free', name: 'OpenRouter: Free Auto-Route (避堵推荐-免排队自动免费路由)', isFree: true },
+        { id: 'qwen/qwen-3-coder:free', name: 'Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)', isFree: true },
+        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct (免费)', isFree: true },
+        { id: 'google/gemma-2-9b-it:free', name: 'Google: Gemma 2 9B (免费)', isFree: true },
+        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen: Qwen 2.5 72B Instruct (免费)', isFree: true }
+      ]);
+    }
+
     const today = new Date();
     const yyyy = today.getFullYear();
     const mm = String(today.getMonth() + 1).padStart(2, '0');
@@ -263,7 +304,14 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
         }
       } catch (error: any) {
         console.error('在线 AI 生成失败:', error);
-        showToast(`❌ AI 生成失败: ${error.message || error}，已为您自动降级至本地生成。`, 'error');
+        const errMsg = (error.message || String(error)).toLowerCase();
+        
+        // 针对上游 API 发生 429 或者是被限流的状况进行明确避堵 Toast 引导
+        if (errMsg.includes('429') || errMsg.includes('too many requests') || errMsg.includes('limit')) {
+          showToast('⚠️ 上游大模型服务开小差了 (已被平台限流 429 啦)！已为您降级为本地生成。建议您在左下角一键切换为 [避堵路由] 模型，即可秒速绕开拥堵！', 'error');
+        } else {
+          showToast(`❌ AI 生成失败: ${error.message || error}，已为您自动降级至本地生成。`, 'error');
+        }
         generateLocally(job);
       } finally {
         setSaveStatus('idle');
@@ -515,86 +563,226 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
           )}
 
           {/* 3.5 大模型极速切换与状态条 */}
-          <div 
-            style={{ 
-              display: 'flex', 
-              justifyContent: 'space-between', 
-              alignItems: 'center', 
-              padding: '10px 12px', 
-              borderRadius: '10px', 
-              background: 'rgba(255, 255, 255, 0.03)', 
-              border: '1px solid var(--glass-border)',
-              fontSize: '12px',
-              marginTop: '4px',
-              flexWrap: 'wrap',
-              gap: '6px'
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <span style={{ color: 'var(--text-muted)' }}>AI 模式:</span>
-              <span 
-                style={{ 
-                  fontWeight: '600',
-                  color: aiSettings.aiEnabled ? '#10B981' : 'var(--text-secondary)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
+          <div style={{ position: 'relative', marginTop: '4px' }}>
+            <div 
+              style={{ 
+                display: 'flex', 
+                justifyContent: 'space-between', 
+                alignItems: 'center', 
+                padding: '10px 12px', 
+                borderRadius: '10px', 
+                background: 'rgba(255, 255, 255, 0.03)', 
+                border: '1px solid var(--glass-border)',
+                fontSize: '12px',
+                flexWrap: 'wrap',
+                gap: '6px'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ color: 'var(--text-muted)' }}>AI 模式:</span>
+                <span 
+                  style={{ 
+                    fontWeight: '600',
+                    color: aiSettings.aiEnabled ? '#10B981' : 'var(--text-secondary)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  {aiSettings.aiEnabled ? (
+                    <>
+                      {aiSettings.aiModel === 'openrouter/free' ? '🟢 🔥 [避堵路由]' : '🟢 🔥'} {aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}
+                    </>
+                  ) : '🔴 未启用大模型 (降级本地引擎)'}
+                </span>
+              </div>
+              {aiSettings.aiEnabled && (
+                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                  <button
+                    onClick={() => handleQuickChangeModel('openrouter/free')}
+                    style={{
+                      padding: '3px 6px',
+                      borderRadius: '4px',
+                      background: aiSettings.aiModel === 'openrouter/free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      color: aiSettings.aiModel === 'openrouter/free' ? '#60A5FA' : 'var(--text-secondary)',
+                      border: '1px solid ' + (aiSettings.aiModel === 'openrouter/free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                      fontSize: '10px',
+                      cursor: 'pointer'
+                    }}
+                    title="避堵推荐：免排队自动免费分流"
+                  >
+                    🚀 避堵路由
+                  </button>
+                  <button
+                    onClick={() => handleQuickChangeModel('qwen/qwen-3-coder:free')}
+                    style={{
+                      padding: '3px 6px',
+                      borderRadius: '4px',
+                      background: aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      color: aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? '#60A5FA' : 'var(--text-secondary)',
+                      border: '1px solid ' + (aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                      fontSize: '10px',
+                      cursor: 'pointer'
+                    }}
+                    title="Qwen3 Coder 480B 免费推荐"
+                  >
+                    💻 Qwen3
+                  </button>
+                  <button
+                    onClick={() => handleQuickChangeModel('meta-llama/llama-3.3-70b-instruct:free')}
+                    style={{
+                      padding: '3px 6px',
+                      borderRadius: '4px',
+                      background: aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      color: aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? '#60A5FA' : 'var(--text-secondary)',
+                      border: '1px solid ' + (aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                      fontSize: '10px',
+                      cursor: 'pointer'
+                    }}
+                    title="Llama 3.3 70B 免费备选"
+                  >
+                    🦙 Llama
+                  </button>
+                  {/* 新设“更多自选”悬浮按钮，支持主页面所有大模型搜索与切换 */}
+                  <button
+                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                    style={{
+                      padding: '3px 6px',
+                      borderRadius: '4px',
+                      background: isDropdownOpen ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      color: isDropdownOpen ? '#34D399' : 'var(--text-secondary)',
+                      border: '1px solid ' + (isDropdownOpen ? 'rgba(16, 185, 129, 0.4)' : 'transparent'),
+                      fontSize: '10px',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '2px'
+                    }}
+                  >
+                    🔍 更多模型
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* 主界面多模型检索切换悬浮卡片 */}
+            {isDropdownOpen && aiSettings.aiEnabled && (
+              <div 
+                style={{
+                  position: 'absolute',
+                  bottom: '100%',
+                  right: '10px',
+                  marginBottom: '6px',
+                  width: '280px',
+                  borderRadius: '10px',
+                  background: 'var(--panel-bg)',
+                  backdropFilter: 'blur(16px)',
+                  border: '1px solid var(--glass-border)',
+                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+                  padding: '8px',
+                  zIndex: 999
                 }}
               >
-                {aiSettings.aiEnabled ? (
-                  <>
-                    🟢 {aiSettings.aiModel === 'openrouter/free' ? '🔥 [避堵路由]' : '🔥'} {aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}
-                  </>
-                ) : '🔴 未启用大模型 (降级本地引擎)'}
-              </span>
-            </div>
-            {aiSettings.aiEnabled && (
-              <div style={{ display: 'flex', gap: '4px' }}>
-                <button
-                  onClick={() => handleQuickChangeModel('openrouter/free')}
+                <input 
+                  type="text"
+                  placeholder="搜索已同步的所有模型..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onClick={(e) => e.stopPropagation()}
                   style={{
-                    padding: '3px 6px',
-                    borderRadius: '4px',
-                    background: aiSettings.aiModel === 'openrouter/free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                    color: aiSettings.aiModel === 'openrouter/free' ? '#60A5FA' : 'var(--text-secondary)',
-                    border: '1px solid ' + (aiSettings.aiModel === 'openrouter/free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
-                    fontSize: '10px',
-                    cursor: 'pointer'
+                    width: '100%',
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    background: 'rgba(0,0,0,0.2)',
+                    border: '1px solid var(--glass-border)',
+                    color: '#ffffff',
+                    fontSize: '11px',
+                    outline: 'none',
+                    marginBottom: '4px'
                   }}
-                  title="避堵推荐：免排队自动免费分流"
-                >
-                  🚀 避堵路由
-                </button>
-                <button
-                  onClick={() => handleQuickChangeModel('qwen/qwen-3-coder:free')}
+                />
+                <div 
                   style={{
-                    padding: '3px 6px',
-                    borderRadius: '4px',
-                    background: aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                    color: aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? '#60A5FA' : 'var(--text-secondary)',
-                    border: '1px solid ' + (aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
-                    fontSize: '10px',
-                    cursor: 'pointer'
+                    maxHeight: '160px',
+                    overflowY: 'auto',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '4px'
                   }}
-                  title="Qwen3 Coder 480B 免费推荐"
                 >
-                  💻 Qwen3
-                </button>
-                <button
-                  onClick={() => handleQuickChangeModel('meta-llama/llama-3.3-70b-instruct:free')}
-                  style={{
-                    padding: '3px 6px',
-                    borderRadius: '4px',
-                    background: aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                    color: aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? '#60A5FA' : 'var(--text-secondary)',
-                    border: '1px solid ' + (aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
-                    fontSize: '10px',
-                    cursor: 'pointer'
-                  }}
-                  title="Llama 3.3 70B 免费备选"
-                >
-                  🦙 Llama
-                </button>
+                  {(() => {
+                    const getModelWeight = (m: { id: string; name: string; isFree: boolean }) => {
+                      const isRec = checkIsRecommended(m);
+                      if (m.isFree && isRec) return 4;
+                      if (m.isFree) return 3;
+                      if (isRec) return 2;
+                      return 1;
+                    };
+
+                    const filtered = modelList
+                      .filter(m => 
+                        m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                        m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                        (searchQuery.toLowerCase() === 'free' && m.isFree)
+                      )
+                      .sort((a, b) => getModelWeight(b) - getModelWeight(a));
+
+                    return filtered.length > 0 ? (
+                      filtered.map((m) => {
+                        const isRec = checkIsRecommended(m);
+                        const isAuto = m.id.toLowerCase().includes('openrouter/free');
+                        const isSelected = aiSettings.aiModel === m.id;
+                        return (
+                          <div
+                            key={m.id}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleQuickChangeModel(m.id);
+                              setIsDropdownOpen(false);
+                              setSearchQuery('');
+                            }}
+                            className="clickable"
+                            style={{
+                              padding: '6px 8px',
+                              borderRadius: '6px',
+                              background: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
+                              border: isSelected ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
+                              fontSize: '11px',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center',
+                              cursor: 'pointer',
+                              color: isSelected ? '#ffffff' : 'var(--text-secondary)'
+                            }}
+                          >
+                            <span style={{ fontWeight: isSelected ? '700' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '170px' }}>
+                              {isRec ? (isAuto ? '🔥 [避堵] ' : '🔥 ') : ''}{m.name}
+                            </span>
+                            <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+                              {isAuto && (
+                                <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6', fontWeight: '700' }}>
+                                  首选
+                                </span>
+                              )}
+                              {isRec && !isAuto && (
+                                <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: 'rgba(245, 158, 11, 0.15)', color: '#F59E0B', fontWeight: '700' }}>
+                                  推荐
+                                </span>
+                              )}
+                              <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: m.isFree ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: m.isFree ? '#10B981' : '#EF4444', fontWeight: '700' }}>
+                                {m.isFree ? '免费' : '付费'}
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div style={{ padding: '10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '10px' }}>
+                        无匹配模型
+                      </div>
+                    );
+                  })()}
+                </div>
               </div>
             )}
           </div>
