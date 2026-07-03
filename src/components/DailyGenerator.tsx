@@ -43,6 +43,36 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
+  // 大模型偏好快捷读取与快速切换
+  const [aiSettings, setAiSettings] = useState({
+    aiEnabled: false,
+    aiApiKey: '',
+    aiApiUrl: 'https://openrouter.ai/api/v1',
+    aiModel: 'qwen/qwen-3-coder:free'
+  });
+
+  const loadAISettings = () => {
+    const raw = localStorage.getItem('winner_daily_ai_settings');
+    if (raw) {
+      try {
+        setAiSettings(JSON.parse(raw));
+      } catch (e) {
+        console.error('加载快捷大模型设置失败:', e);
+      }
+    }
+  };
+
+  useEffect(() => {
+    loadAISettings();
+  }, []);
+
+  const handleQuickChangeModel = (newModel: string) => {
+    const nextSettings = { ...aiSettings, aiModel: newModel };
+    setAiSettings(nextSettings);
+    localStorage.setItem('winner_daily_ai_settings', JSON.stringify(nextSettings));
+    showToast(`🎯 已快捷切换大模型为: ${newModel.split('/').pop() || newModel}`, 'success');
+  };
+
   // 初始化选择日期为今天 (当前系统时间 2026-07-02)
   useEffect(() => {
     const today = new Date();
@@ -173,26 +203,23 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
     const job = appData.settings.job || 'frontend';
     if (mode === 'ai_prompt') {
       const prompt = generateAIPrompt(userInput, job);
-      setTitle('从豆包复制结果粘贴至此');
+      setTitle('从大模型复制结果粘贴至此');
       setHours(8);
       setCooperation(false);
       setDifficulty(false);
       setContent(prompt);
+      
+      // 自动写入系统剪贴板，优化交互
+      try {
+        navigator.clipboard.writeText(prompt);
+        showToast('📋 写实豆包提示词已自动复制到系统剪贴板，快去大模型粘贴吧！', 'success');
+      } catch (err) {
+        showToast('📋 提示词生成成功！请手动复制右侧面板文本使用。', 'info');
+      }
       return;
     }
 
-    // 读取保存在用户本机 LocalStorage 里的独立大模型 Key 偏好
-    const rawAISettings = localStorage.getItem('winner_daily_ai_settings');
-    let aiSettings = { aiEnabled: false, aiApiKey: '', aiApiUrl: 'https://openrouter.ai/api/v1', aiModel: 'qwen/qwen-3-coder:free' };
-    if (rawAISettings) {
-      try {
-        aiSettings = JSON.parse(rawAISettings);
-      } catch (e) {
-        console.error('解析本地大模型密钥失败:', e);
-      }
-    }
-
-    // 在线 AI 智能生成
+    // 在线 AI 智能生成 (直接使用 state 中同步好的设置)
     if (aiSettings.aiEnabled && aiSettings.aiApiKey) {
       setSaveStatus('saving'); // 借用保存 loading 状态
       showToast(`🤖 正在联调大模型 [${aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}] 生成日报...`, 'info');
@@ -205,6 +232,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
           body: JSON.stringify({
             userInput,
             job,
+            mode, // 传递当前的工作模式状态 (用于空任务下的自适应预设)
             aiApiKey: aiSettings.aiApiKey,
             aiApiUrl: aiSettings.aiApiUrl,
             aiModel: aiSettings.aiModel
@@ -485,6 +513,91 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
                 : '无需输入！系统将自动生成关于“前端前沿技术预研”、“团队规范梳理”等高含金量的沉淀式日报。'}
             </div>
           )}
+
+          {/* 3.5 大模型极速切换与状态条 */}
+          <div 
+            style={{ 
+              display: 'flex', 
+              justifyContent: 'space-between', 
+              alignItems: 'center', 
+              padding: '10px 12px', 
+              borderRadius: '10px', 
+              background: 'rgba(255, 255, 255, 0.03)', 
+              border: '1px solid var(--glass-border)',
+              fontSize: '12px',
+              marginTop: '4px',
+              flexWrap: 'wrap',
+              gap: '6px'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span style={{ color: 'var(--text-muted)' }}>AI 模式:</span>
+              <span 
+                style={{ 
+                  fontWeight: '600',
+                  color: aiSettings.aiEnabled ? '#10B981' : 'var(--text-secondary)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+              >
+                {aiSettings.aiEnabled ? (
+                  <>
+                    🟢 {aiSettings.aiModel === 'openrouter/free' ? '🔥 [避堵路由]' : '🔥'} {aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}
+                  </>
+                ) : '🔴 未启用大模型 (降级本地引擎)'}
+              </span>
+            </div>
+            {aiSettings.aiEnabled && (
+              <div style={{ display: 'flex', gap: '4px' }}>
+                <button
+                  onClick={() => handleQuickChangeModel('openrouter/free')}
+                  style={{
+                    padding: '3px 6px',
+                    borderRadius: '4px',
+                    background: aiSettings.aiModel === 'openrouter/free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                    color: aiSettings.aiModel === 'openrouter/free' ? '#60A5FA' : 'var(--text-secondary)',
+                    border: '1px solid ' + (aiSettings.aiModel === 'openrouter/free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                    fontSize: '10px',
+                    cursor: 'pointer'
+                  }}
+                  title="避堵推荐：免排队自动免费分流"
+                >
+                  🚀 避堵路由
+                </button>
+                <button
+                  onClick={() => handleQuickChangeModel('qwen/qwen-3-coder:free')}
+                  style={{
+                    padding: '3px 6px',
+                    borderRadius: '4px',
+                    background: aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                    color: aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? '#60A5FA' : 'var(--text-secondary)',
+                    border: '1px solid ' + (aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                    fontSize: '10px',
+                    cursor: 'pointer'
+                  }}
+                  title="Qwen3 Coder 480B 免费推荐"
+                >
+                  💻 Qwen3
+                </button>
+                <button
+                  onClick={() => handleQuickChangeModel('meta-llama/llama-3.3-70b-instruct:free')}
+                  style={{
+                    padding: '3px 6px',
+                    borderRadius: '4px',
+                    background: aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                    color: aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? '#60A5FA' : 'var(--text-secondary)',
+                    border: '1px solid ' + (aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                    fontSize: '10px',
+                    cursor: 'pointer'
+                  }}
+                  title="Llama 3.3 70B 免费备选"
+                >
+                  🦙 Llama
+                </button>
+              </div>
+            )}
+          </div>
 
           {/* 4. 触发生成按钮 */}
           <button

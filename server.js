@@ -147,16 +147,28 @@ app.post('/api/reset', (req, res) => {
 
 // API: 在线调用 AI 生成日报 (多用户 Key 隔离中转代理模式，后端零留存)
 app.post('/api/generate', async (req, res) => {
-  const { userInput, job, aiApiKey, aiApiUrl, aiModel } = req.body;
+  const { userInput, job, mode, aiApiKey, aiApiUrl, aiModel } = req.body;
 
   if (!aiApiKey) {
     return res.status(400).json({ error: '在线大模型接口未配置 API 密钥 (API Key)！' });
   }
 
   const jobName = job === 'designer' ? 'UI/UX 视觉设计师' : '前端开发工程师';
-  const tasksText = (userInput && userInput.trim())
-    ? `【${userInput.trim()}】`
-    : '“日常基础代码库维护与细节调优（今天没有特定大需求上线，主要进行排错与代码整理自测）”';
+  
+  let tasksText = '';
+  if (userInput && userInput.trim()) {
+    tasksText = `【${userInput.trim()}】`;
+  } else {
+    // 根据 mode 工作状态进行自适应空文本预设
+    if (mode === 'idle') {
+      tasksText = '“日常维护：例行代码库细节微调、排查潜在的前端界面样式兼容缺陷、整理规范并自测”';
+    } else if (mode === 'study') {
+      tasksText = '“技术预研：研读最新的前端工程化规范指南、在本地环境搭建测试 Demo、沉淀框架新特性”';
+    } else {
+      // 默认/正常任务 (mode === 'task' 且不输入)
+      tasksText = '“业务开发：日常模块页面与交互逻辑编写、与后端完成初步数据联调、本地运行浏览器回归走查”';
+    }
+  }
 
   const examples = job === 'designer' ? `
 * ❌ 反面例子（太虚太浮夸，HR一眼看穿是AI）：
