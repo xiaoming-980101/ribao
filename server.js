@@ -159,14 +159,26 @@ app.post('/api/generate', async (req, res) => {
   if (userInput && userInput.trim()) {
     tasksText = `【${userInput.trim()}】`;
   } else {
-    // 根据 mode 工作状态进行自适应空文本预设
-    if (mode === 'idle') {
-      tasksText = '“日常维护：例行代码库细节微调、排查潜在的前端界面样式兼容缺陷、整理规范并自测”';
-    } else if (mode === 'study') {
-      tasksText = '“技术预研：研读最新的前端工程化规范指南、在本地环境搭建测试 Demo、沉淀框架新特性”';
+    if (job === 'designer') {
+      // 设计师岗位的空任务自适应预设
+      if (mode === 'idle') {
+        tasksText = '“日常维护：整理历史项目高保真视觉设计源文件、清理本地 Figma 冗余图层、校对整理视觉组件规范规范库”';
+      } else if (mode === 'study') {
+        tasksText = '“设计预研：调研行业内最新的移动端 UI/UX 交互趋势、收集主流商业优秀设计概念、输出个人视觉提案”';
+      } else {
+        // mode === 'task' 且不输入
+        tasksText = '“设计开发：日常核心页面高保真视觉效果图绘制、配合产品分析线框图流程、输出交付切图并对开发还原度走查”';
+      }
     } else {
-      // 默认/正常任务 (mode === 'task' 且不输入)
-      tasksText = '“业务开发：日常模块页面与交互逻辑编写、与后端完成初步数据联调、本地运行浏览器回归走查”';
+      // 前端开发岗位的空任务自适应预设
+      if (mode === 'idle') {
+        tasksText = '“日常维护：例行代码库细节微调、排查潜在的前端界面样式兼容缺陷、整理规范并自测”';
+      } else if (mode === 'study') {
+        tasksText = '“技术预研：研读最新的前端工程化规范指南、在本地环境搭建测试 Demo、沉淀框架新特性”';
+      } else {
+        // 默认/正常任务 (mode === 'task' 且不输入)
+        tasksText = '“业务开发：日常模块页面与交互逻辑编写、与后端完成初步数据联调、本地运行浏览器回归走查”';
+      }
     }
   }
 
