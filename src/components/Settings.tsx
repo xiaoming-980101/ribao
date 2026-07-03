@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save, Trash2, Cpu, RefreshCw } from 'lucide-react';
-import { AppData, saveSettings, importAllData, resetAllData } from '../utils/storage';
+import { AppData, saveSettings, importAllData, resetAllData, BACKEND_URL } from '../utils/storage';
 
 interface SettingsProps {
   appData: AppData;
@@ -11,6 +11,11 @@ interface SettingsProps {
 // 智能识别核心免费推荐大模型 (对中文大白话生成效果最佳且免费的型号)
 const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) => {
   const idLower = m.id.toLowerCase();
+  
+  // 针对 openrouter/free 自动路由模型的特殊匹配
+  if (idLower === 'openrouter/free' || idLower.includes('openrouter/free')) {
+    return true;
+  }
   
   // 必须是免费模型，且符合我们推荐的关键型号
   if (m.isFree) {
@@ -67,6 +72,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
     } else {
       // 预设默认免费大模型
       setModelList([
+        { id: 'openrouter/free', name: 'OpenRouter: Free Auto-Route (避堵推荐-免排队自动免费路由)', isFree: true },
         { id: 'qwen/qwen-3-coder:free', name: 'Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)', isFree: true },
         { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct (免费)', isFree: true },
         { id: 'google/gemma-2-9b-it:free', name: 'Google: Gemma 2 9B (免费)', isFree: true },
@@ -84,7 +90,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
     setIsSyncing(true);
     showToast('🔄 正在同步云端大模型可用型号列表...', 'info');
     try {
-      const response = await fetch('http://localhost:3001/api/models', {
+      const response = await fetch(`${BACKEND_URL}/api/models`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ aiApiKey, aiApiUrl })
@@ -578,9 +584,24 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                                     }}
                                   >
                                     <span style={{ fontWeight: aiModel === m.id ? '700' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>
-                                      {isRec ? '🔥 ' : ''}{m.name}
+                                      {isRec ? (m.id.toLowerCase().includes('openrouter/free') ? '🔥 [避堵路由] ' : '🔥 ') : ''}{m.name}
                                     </span>
                                     <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                      {m.id.toLowerCase().includes('openrouter/free') && (
+                                        <span 
+                                          style={{
+                                            fontSize: '8px',
+                                            padding: '1px 4px',
+                                            borderRadius: '3px',
+                                            background: 'rgba(59, 130, 246, 0.15)',
+                                            color: '#3B82F6',
+                                            fontWeight: '700',
+                                            border: '1px solid rgba(59, 130, 246, 0.2)'
+                                          }}
+                                        >
+                                          避堵首选
+                                        </span>
+                                      )}
                                       {isRec && (
                                         <span 
                                           style={{

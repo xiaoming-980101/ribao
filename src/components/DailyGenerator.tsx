@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Copy, Check, Save, AlertTriangle, RefreshCw, Layers } from 'lucide-react';
-import { LogEntry, AppData, saveLog } from '../utils/storage';
+import { LogEntry, AppData, saveLog, BACKEND_URL } from '../utils/storage';
 import {
   expandUserInput,
   generateRandomFrontendDaily,
@@ -197,7 +197,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
       setSaveStatus('saving'); // 借用保存 loading 状态
       showToast(`🤖 正在联调大模型 [${aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}] 生成日报...`, 'info');
       try {
-        const response = await fetch('http://localhost:3001/api/generate', {
+        const response = await fetch(`${BACKEND_URL}/api/generate`, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json'

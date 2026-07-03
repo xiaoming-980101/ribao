@@ -216,7 +216,17 @@ ${examples}
     }
 
     const apiData = await response.json();
-    const rawText = apiData.choices[0].message.content.trim();
+
+    if (!apiData.choices || apiData.choices.length === 0 || !apiData.choices[0].message) {
+      throw new Error('API 平台返回了空响应，请切换其他免费推荐大模型或稍后重试！');
+    }
+
+    const contentVal = apiData.choices[0].message.content;
+    if (contentVal === null || contentVal === undefined) {
+      throw new Error('大模型内容被平台过滤或响应为空，请换个模型重新尝试！');
+    }
+
+    const rawText = contentVal.trim();
 
     // 解析
     let title = '日常开发工作';

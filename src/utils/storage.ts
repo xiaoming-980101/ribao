@@ -27,7 +27,12 @@ export interface AppData {
   settings: Settings;
 }
 
-const BACKEND_URL = 'http://localhost:3001';
+// 动态计算后端 API 基准地址。开发环境连 localhost:3001，生产部署环境（如京东云 IP 访问）连网页同源 origin
+export const BACKEND_URL = typeof window !== 'undefined'
+  ? (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+    ? 'http://localhost:3001'
+    : window.location.origin)
+  : 'http://localhost:3001';
 
 // 默认配置
 const DEFAULT_SETTINGS: Settings = {
