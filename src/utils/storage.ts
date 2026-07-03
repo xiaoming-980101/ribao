@@ -43,7 +43,8 @@ const DEFAULT_SETTINGS: Settings = {
   aiEnabled: false,        // 默认不开启，由用户自主配置打通
   aiApiKey: '',
   aiApiUrl: 'https://openrouter.ai/api/v1',
-  aiModel: 'qwen/qwen-3-coder:free' // 默认推荐 Qwen3 Coder 480B 免费版大模型
+  aiModel: 'qwen/qwen-3-coder:free', // 默认推荐 Qwen3 Coder 480B 免费版大模型
+  saveKeyToCloud: true    // 新账号默认开启云端备份密钥
 };
 
 // 内存中的临时数据缓存，降级时使用

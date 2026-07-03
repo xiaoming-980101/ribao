@@ -118,7 +118,8 @@ app.post('/api/register', (req, res) => {
       aiApiKey: '',
       aiApiUrl: 'https://openrouter.ai/api/v1',
       aiModel: 'openrouter/free',
-      aiEnabled: true
+      aiEnabled: false, // 默认不勾选开启大模型模式
+      saveKeyToCloud: true // 默认第一次注册允许云端保存Key
     }
   };
 
@@ -231,7 +232,7 @@ app.delete('/api/logs/:date', (req, res) => {
 // API: 保存用户配置
 app.post('/api/settings', (req, res) => {
   const username = (req.headers['x-user-name'] || 'admin').trim().toLowerCase();
-  const { job, tone, similarityThreshold, rollingDays, customTemplates, aiApiKey, aiApiUrl, aiModel, aiEnabled } = req.body;
+  const { job, tone, similarityThreshold, rollingDays, customTemplates, aiApiKey, aiApiUrl, aiModel, aiEnabled, saveKeyToCloud } = req.body;
   const db = readDB();
 
   if (!db.users[username]) {
@@ -248,7 +249,8 @@ app.post('/api/settings', (req, res) => {
     aiApiKey: aiApiKey !== undefined ? aiApiKey : db.users[username].settings.aiApiKey,
     aiApiUrl: aiApiUrl !== undefined ? aiApiUrl : db.users[username].settings.aiApiUrl,
     aiModel: aiModel !== undefined ? aiModel : db.users[username].settings.aiModel,
-    aiEnabled: aiEnabled !== undefined ? !!aiEnabled : db.users[username].settings.aiEnabled
+    aiEnabled: aiEnabled !== undefined ? !!aiEnabled : db.users[username].settings.aiEnabled,
+    saveKeyToCloud: saveKeyToCloud !== undefined ? !!saveKeyToCloud : db.users[username].settings.saveKeyToCloud
   };
 
   if (writeDB(db)) {
@@ -273,7 +275,8 @@ app.post('/api/reset', (req, res) => {
       aiApiKey: '',
       aiApiUrl: 'https://openrouter.ai/api/v1',
       aiModel: 'openrouter/free',
-      aiEnabled: true
+      aiEnabled: false,
+      saveKeyToCloud: true
     };
     if (writeDB(db)) {
       return res.json({ success: true });

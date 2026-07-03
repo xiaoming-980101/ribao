@@ -150,10 +150,15 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       setSimilarityThreshold(appData.settings.similarityThreshold || 50);
       setRollingDays(appData.settings.rollingDays || 7);
       
-      // 如果后端存有有效的 API Key，默认勾选“云端保存”
-      if (appData.settings.aiApiKey) {
+      // 🔴 智能判定 saveKeyToCloud 的勾选状态：
+      // 如果后端 settings.saveKeyToCloud 明确存在定义（不管 true/false），均以它为准；
+      // 如果未定义（如新注册用户），则默认勾选为 true
+      const cloudSavePref = appData.settings.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
+      setSaveKeyToCloud(cloudSavePref);
+
+      // 如果开启了云端保存偏好，且云端存有 key，则拉起展示它
+      if (cloudSavePref && appData.settings.aiApiKey) {
         setAiApiKey(appData.settings.aiApiKey);
-        setSaveKeyToCloud(true);
       }
     }
 
@@ -163,10 +168,11 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       try {
         const parsed = JSON.parse(rawAISettings);
         setAiEnabled(parsed.aiEnabled || false);
-        // 如果后端没有 Key，但本地缓存有，说明之前用户只选择在本地缓存
-        if (!appData.settings?.aiApiKey && parsed.aiApiKey) {
+        
+        // 判定云端偏好：若云端未开启，则加载本地浏览器里缓存的 Key
+        const cloudSavePref = appData.settings?.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
+        if (!cloudSavePref && parsed.aiApiKey) {
           setAiApiKey(parsed.aiApiKey);
-          setSaveKeyToCloud(false);
         }
         setAiApiUrl(parsed.aiApiUrl || 'https://openrouter.ai/api/v1');
         setAiModel(parsed.aiModel || 'qwen/qwen-3-coder:free');
