@@ -4,6 +4,7 @@ import DailyGenerator from './components/DailyGenerator';
 import HistoryCalendar from './components/HistoryCalendar';
 import WeeklyGenerator from './components/WeeklyGenerator';
 import Settings from './components/Settings';
+import LoginModal from './components/LoginModal';
 import { fetchAllData, AppData } from './utils/storage';
 import { CheckCircle2, AlertTriangle, Info } from 'lucide-react';
 
@@ -11,6 +12,10 @@ export default function App() {
   const [currentTab, setCurrentTab] = useState<string>('generator');
   const [theme, setTheme] = useState<'light' | 'dark'>('dark');
   const [isOffline, setIsOffline] = useState<boolean>(false);
+  
+  // 核心用户登录态
+  const [username, setUsername] = useState<string | null>(localStorage.getItem('winner_daily_user'));
+
   const [appData, setAppData] = useState<AppData>({
     logs: {},
     settings: {
@@ -24,6 +29,36 @@ export default function App() {
       aiModel: 'qwen/qwen-3-coder:free'
     }
   });
+
+  const handleLoginSuccess = (user: string, settings: any) => {
+    setUsername(user);
+    if (settings) {
+      setAppData((prev) => ({
+        ...prev,
+        settings: { ...prev.settings, ...settings }
+      }));
+    }
+    loadData();
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('winner_daily_user');
+    setUsername(null);
+    showToast('🚪 您已成功退出登录，账号数据已离线隔离。', 'info');
+    setAppData({
+      logs: {},
+      settings: {
+        job: 'frontend',
+        tone: 'professional',
+        similarityThreshold: 50,
+        rollingDays: 7,
+        aiEnabled: false,
+        aiApiKey: '',
+        aiApiUrl: 'https://openrouter.ai/api/v1',
+        aiModel: 'qwen/qwen-3-coder:free'
+      }
+    });
+  };
 
   // 全局 Toast 状态
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; show: boolean } | null>(null);
@@ -74,6 +109,7 @@ export default function App() {
             appData={appData}
             onSaveSuccess={loadData}
             showToast={showToast}
+            onNavigateToTab={setCurrentTab}
           />
         );
       case 'calendar':
@@ -105,10 +141,29 @@ export default function App() {
             appData={appData}
             onSaveSuccess={loadData}
             showToast={showToast}
+            onNavigateToTab={setCurrentTab}
           />
         );
     }
   };
+
+  if (!username) {
+    return (
+      <>
+        <LoginModal onLoginSuccess={handleLoginSuccess} showToast={showToast} />
+        {toast && (
+          <div className="toast-container">
+            <div className={`toast-item ${toast.show ? 'show' : ''} ${toast.type}`}>
+              {toast.type === 'success' && <CheckCircle2 size={18} color="#10B981" />}
+              {toast.type === 'error' && <AlertTriangle size={18} color="#EF4444" />}
+              {toast.type === 'info' && <Info size={18} color="var(--accent-color)" />}
+              <span style={{ fontSize: '13px', fontWeight: '600' }}>{toast.message}</span>
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
 
   return (
     <div
@@ -126,6 +181,8 @@ export default function App() {
         theme={theme}
         toggleTheme={toggleTheme}
         isOffline={isOffline}
+        username={username}
+        onLogout={handleLogout}
       />
 
       <main

@@ -13,6 +13,7 @@ interface DailyGeneratorProps {
   appData: AppData;
   onSaveSuccess: () => void;
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
+  onNavigateToTab?: (tab: string) => void;
 }
 
 // 智能识别核心免费推荐大模型 (对中文大白话生成效果最佳且免费的型号)
@@ -30,7 +31,7 @@ const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) =>
   return false;
 };
 
-export default function DailyGenerator({ appData, onSaveSuccess, showToast }: DailyGeneratorProps) {
+export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNavigateToTab }: DailyGeneratorProps) {
   // 当前选择的日期 (YYYY-MM-DD)
   const [selectedDate, setSelectedDate] = useState<string>('');
   
@@ -498,6 +499,70 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast }: Da
             maxWidth: '480px'
           }}
         >
+          {/* AI 激活横幅，如果当前用户的 settings 里未配置 Key 则进行强力引导 */}
+          {!aiSettings.aiApiKey && (
+            <div 
+              style={{
+                background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.06) 0%, rgba(99, 102, 241, 0.06) 100%)',
+                border: '1px solid rgba(245, 158, 11, 0.2)',
+                borderRadius: '10px',
+                padding: '14px',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+                fontSize: '11px',
+                color: '#EAB308',
+                lineHeight: '1.5'
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '700' }}>
+                <span>💡</span>
+                <span>AI 大模型功能激活指引</span>
+              </div>
+              <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
+                检测到您尚未配置 API 密钥。若要开启智能生成日报功能，请优先做以下配置：
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '4px' }}>
+                <a 
+                  href="https://openrouter.ai/workspaces/default/keys" 
+                  target="_blank" 
+                  rel="noreferrer"
+                  style={{ color: '#60A5FA', textDecoration: 'underline', fontWeight: '600' }}
+                >
+                  🔑 第一步：直达获取 OpenRouter API 密钥 (Keys)
+                </a>
+                <a 
+                  href="https://openrouter.ai/models?max_price=0&output_modalities=text" 
+                  target="_blank" 
+                  rel="noreferrer"
+                  style={{ color: '#34D399', textDecoration: 'underline', fontWeight: '600' }}
+                >
+                  🔍 第二步：查阅 OpenRouter 平台的免费模型列表
+                </a>
+              </div>
+              {onNavigateToTab && (
+                <button
+                  onClick={() => onNavigateToTab('settings')}
+                  className="clickable"
+                  style={{
+                    alignSelf: 'flex-start',
+                    padding: '5px 10px',
+                    borderRadius: '6px',
+                    background: 'rgba(245, 158, 11, 0.15)',
+                    border: '1px solid rgba(245, 158, 11, 0.3)',
+                    color: '#F59E0B',
+                    fontWeight: '600',
+                    fontSize: '10px',
+                    cursor: 'pointer',
+                    marginTop: '2px'
+                  }}
+                >
+                  ➡️ 一键前往【个性化配置】配置 API Key
+                </button>
+              )}
+            </div>
+          )}
+
           {/* 1. 日期选择 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
             <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>选择日志日期</label>

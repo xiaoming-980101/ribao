@@ -79,7 +79,13 @@ function setLocalStorageData(data: AppData) {
  */
 export async function fetchAllData(): Promise<{ data: AppData; isOffline: boolean }> {
   try {
-    const res = await fetch(`${BACKEND_URL}/api/data`, { signal: AbortSignal.timeout(1500) });
+    const user = localStorage.getItem('winner_daily_user') || 'admin';
+    const res = await fetch(`${BACKEND_URL}/api/data`, { 
+      headers: {
+        'X-User-Name': user
+      },
+      signal: AbortSignal.timeout(1500) 
+    });
     if (res.ok) {
       const data = await res.json();
       memoryData = data;
@@ -107,9 +113,13 @@ export async function saveLog(
   const payload = { date, ...logData };
 
   try {
+    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/logs`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-User-Name': user
+      },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(1500)
     });
@@ -140,8 +150,12 @@ export async function saveLog(
  */
 export async function deleteLog(date: string): Promise<{ success: boolean; isOffline: boolean }> {
   try {
+    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/logs/${date}`, {
       method: 'DELETE',
+      headers: {
+        'X-User-Name': user
+      },
       signal: AbortSignal.timeout(1500)
     });
     if (res.ok) {
@@ -168,9 +182,13 @@ export async function saveSettings(
   settings: Partial<Settings>
 ): Promise<{ success: boolean; isOffline: boolean }> {
   try {
+    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/settings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-User-Name': user
+      },
       body: JSON.stringify(settings),
       signal: AbortSignal.timeout(1500)
     });
@@ -196,9 +214,13 @@ export async function importAllData(data: AppData): Promise<{ success: boolean; 
   setLocalStorageData(data);
 
   try {
+    const user = localStorage.getItem('winner_daily_user') || 'admin';
     await fetch(`${BACKEND_URL}/api/settings`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 
+        'Content-Type': 'application/json',
+        'X-User-Name': user
+      },
       body: JSON.stringify(data.settings),
       signal: AbortSignal.timeout(1500)
     });
@@ -206,7 +228,10 @@ export async function importAllData(data: AppData): Promise<{ success: boolean; 
     for (const [date, log] of Object.entries(data.logs)) {
       await fetch(`${BACKEND_URL}/api/logs`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'X-User-Name': user
+        },
         body: JSON.stringify({ date, ...log }),
         signal: AbortSignal.timeout(1000)
       });
@@ -223,8 +248,12 @@ export async function importAllData(data: AppData): Promise<{ success: boolean; 
  */
 export async function resetAllData(): Promise<{ success: boolean }> {
   try {
+    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/reset`, {
       method: 'POST',
+      headers: {
+        'X-User-Name': user
+      },
       signal: AbortSignal.timeout(1500)
     });
     if (res.ok) {

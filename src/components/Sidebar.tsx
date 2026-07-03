@@ -7,6 +7,8 @@ interface SidebarProps {
   theme: 'light' | 'dark';
   toggleTheme: () => void;
   isOffline: boolean;
+  username: string | null;
+  onLogout: () => void;
 }
 
 export default function Sidebar({
@@ -14,7 +16,9 @@ export default function Sidebar({
   setCurrentTab,
   theme,
   toggleTheme,
-  isOffline
+  isOffline,
+  username,
+  onLogout
 }: SidebarProps) {
   const menuItems = [
     { id: 'generator', label: '日报生成器', icon: PenSquare },
@@ -91,7 +95,7 @@ export default function Sidebar({
       </div>
 
       {/* 底部状态及主题切换 */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
         {/* 数据源连接状态 */}
         <div
           style={{
@@ -155,6 +159,47 @@ export default function Sidebar({
             />
           </div>
         </div>
+
+        {/* 当前登录账号与隔离空间隔离显示 */}
+        {username && (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              padding: '10px 12px',
+              borderRadius: '10px',
+              background: 'rgba(255, 255, 255, 0.02)',
+              border: '1px solid rgba(255, 255, 255, 0.04)',
+              fontSize: '12px',
+              color: 'var(--text-secondary)',
+              marginTop: '4px'
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', overflow: 'hidden' }}>
+              <span style={{ fontSize: '14px' }}>👤</span>
+              <span style={{ fontWeight: '600', color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '100px' }}>
+                {username}
+              </span>
+            </div>
+            <button
+              onClick={onLogout}
+              className="clickable"
+              style={{
+                padding: '4px 8px',
+                borderRadius: '6px',
+                background: 'rgba(239, 68, 68, 0.1)',
+                border: '1px solid rgba(239, 68, 68, 0.2)',
+                color: '#EF4444',
+                fontSize: '11px',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+            >
+              退出
+            </button>
+          </div>
+        )}
       </div>
     </aside>
   );
