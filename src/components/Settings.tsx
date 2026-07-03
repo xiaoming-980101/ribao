@@ -8,6 +8,17 @@ interface SettingsProps {
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
+const RECOMMENDED_MODEL_IDS = [
+  'qwen/qwen-3-coder:free',
+  'qwen/qwen-3-coder',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'meta-llama/llama-3.3-70b-instruct',
+  'google/gemma-2-9b-it:free',
+  'google/gemma-2-9b-it',
+  'qwen/qwen-2.5-72b-instruct:free',
+  'qwen/qwen-2.5-72b-instruct'
+];
+
 export default function Settings({ appData, onSaveSuccess, showToast }: SettingsProps) {
   const [job, setJob] = useState<string>('frontend');
   const [tone, setTone] = useState<string>('professional');
@@ -445,6 +456,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                         {aiModel ? (
                           <>
                             {modelList.find(m => m.id === aiModel)?.isFree ? '🟢 [免费] ' : '🔴 [付费] '}
+                            {RECOMMENDED_MODEL_IDS.some(id => aiModel.toLowerCase().includes(id.toLowerCase())) ? '🔥 [推荐] ' : ''}
                             {modelList.find(m => m.id === aiModel)?.name || aiModel}
                           </>
                         ) : '点击选择模型...'}
@@ -504,22 +516,27 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                             marginTop: '4px'
                           }}
                         >
-                          {modelList
-                            .filter(m => 
-                              m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                              m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                              (searchQuery.toLowerCase() === 'free' && m.isFree)
-                            )
-                            .sort((a, b) => (a.isFree === b.isFree ? 0 : a.isFree ? -1 : 1))
-                            .length > 0 ? (
-                              modelList
-                                .filter(m => 
-                                  m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                                  m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                  (searchQuery.toLowerCase() === 'free' && m.isFree)
-                                )
-                                .sort((a, b) => (a.isFree === b.isFree ? 0 : a.isFree ? -1 : 1))
-                                .map((m) => (
+                          {(() => {
+                            const getModelWeight = (m: { id: string; isFree: boolean }) => {
+                              const isRec = RECOMMENDED_MODEL_IDS.some(id => m.id.toLowerCase().includes(id.toLowerCase()));
+                              if (m.isFree && isRec) return 4; // 推荐免费置顶
+                              if (m.isFree) return 3;          // 免费普通
+                              if (isRec) return 2;             // 推荐付费
+                              return 1;                        // 付费普通
+                            };
+
+                            const filtered = modelList
+                              .filter(m => 
+                                m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
+                                m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+                                (searchQuery.toLowerCase() === 'free' && m.isFree)
+                              )
+                              .sort((a, b) => getModelWeight(b) - getModelWeight(a));
+
+                            return filtered.length > 0 ? (
+                              filtered.map((m) => {
+                                const isRec = RECOMMENDED_MODEL_IDS.some(id => m.id.toLowerCase().includes(id.toLowerCase()));
+                                return (
                                   <div
                                     key={m.id}
                                     onClick={(e) => {
@@ -543,28 +560,47 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                                     }}
                                   >
                                     <span style={{ fontWeight: aiModel === m.id ? '700' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>
-                                      {m.name}
+                                      {isRec ? '🔥 ' : ''}{m.name}
                                     </span>
-                                    <span 
-                                      style={{
-                                        fontSize: '9px',
-                                        padding: '2px 5px',
-                                        borderRadius: '4px',
-                                        background: m.isFree ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                                        color: m.isFree ? '#10B981' : '#EF4444',
-                                        fontWeight: '700',
-                                        border: m.isFree ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)'
-                                      }}
-                                    >
-                                      {m.isFree ? 'FREE 免费' : '付费'}
-                                    </span>
+                                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                                      {isRec && (
+                                        <span 
+                                          style={{
+                                            fontSize: '8px',
+                                            padding: '1px 4px',
+                                            borderRadius: '3px',
+                                            background: 'rgba(245, 158, 11, 0.15)',
+                                            color: '#F59E0B',
+                                            fontWeight: '700',
+                                            border: '1px solid rgba(245, 158, 11, 0.2)'
+                                          }}
+                                        >
+                                          推荐
+                                        </span>
+                                      )}
+                                      <span 
+                                        style={{
+                                          fontSize: '8px',
+                                          padding: '1px 4px',
+                                          borderRadius: '3px',
+                                          background: m.isFree ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
+                                          color: m.isFree ? '#10B981' : '#EF4444',
+                                          fontWeight: '700',
+                                          border: m.isFree ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)'
+                                        }}
+                                      >
+                                        {m.isFree ? '免费' : '付费'}
+                                      </span>
+                                    </div>
                                   </div>
-                                ))
+                                );
+                              })
                             ) : (
                               <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '11px' }}>
                                 未找到匹配的模型
                               </div>
-                            )}
+                            );
+                          })()}
                         </div>
                       </div>
                     )}
