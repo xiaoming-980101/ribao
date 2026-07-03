@@ -252,6 +252,17 @@ ${examples}
     }
 
     const rawText = contentVal.trim();
+    
+    // 🔴 智能拦截上游安全过滤器返回的无效占位文本 (如 User Safety: safe 或者是短段过滤错误)
+    const textLower = rawText.toLowerCase();
+    if (
+      textLower.includes('user safety') || 
+      textLower.includes('safety: safe') || 
+      textLower.includes('moderation') ||
+      rawText.length < 15
+    ) {
+      throw new Error('上游安全内容拦截: 大模型返回了安全审核占位词，请在左下角切换为其他大模型（如 Qwen3 或 Llama）重新尝试！');
+    }
 
     // 解析
     let title = '日常开发工作';
