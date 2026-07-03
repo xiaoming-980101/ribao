@@ -150,9 +150,12 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       setSimilarityThreshold(appData.settings.similarityThreshold || 50);
       setRollingDays(appData.settings.rollingDays || 7);
       
-      // 🔴 智能判定 saveKeyToCloud 的勾选状态：
-      // 如果后端 settings.saveKeyToCloud 明确存在定义（不管 true/false），均以它为准；
-      // 如果未定义（如新注册用户），则默认勾选为 true
+      // 1. 云端最高优先级：优先从后端数据库配置中同步还原大模型模式的启用状态及地址、模型参数
+      setAiEnabled(appData.settings.aiEnabled || false);
+      setAiApiUrl(appData.settings.aiApiUrl || 'https://openrouter.ai/api/v1');
+      setAiModel(appData.settings.aiModel || 'qwen/qwen-3-coder:free');
+
+      // 智能判定 saveKeyToCloud 的勾选状态
       const cloudSavePref = appData.settings.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
       setSaveKeyToCloud(cloudSavePref);
 
@@ -162,20 +165,24 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       }
     }
 
-    // 从本机隔离的 LocalStorage 恢复当前登录大模型配置
+    // 2. 本地浏览器缓存做敏感密钥的退路兜底 (仅当未选择保存在云端时起效)
     const rawAISettings = localStorage.getItem(`winner_daily_ai_settings_${currentLoggedUser}`);
     if (rawAISettings) {
       try {
         const parsed = JSON.parse(rawAISettings);
-        setAiEnabled(parsed.aiEnabled || false);
         
-        // 判定云端偏好：若云端未开启，则加载本地浏览器里缓存的 Key
+        // 若用户之前决定不把 Key 存云端，则从当前浏览器 LocalStorage 中恢复
         const cloudSavePref = appData.settings?.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
         if (!cloudSavePref && parsed.aiApiKey) {
           setAiApiKey(parsed.aiApiKey);
         }
-        setAiApiUrl(parsed.aiApiUrl || 'https://openrouter.ai/api/v1');
-        setAiModel(parsed.aiModel || 'qwen/qwen-3-coder:free');
+        
+        // 若后端数据因其他原因缺失，以本地缓存兜底参数
+        if (appData.settings) {
+          if (appData.settings.aiEnabled === undefined) setAiEnabled(parsed.aiEnabled || false);
+          if (!appData.settings.aiApiUrl) setAiApiUrl(parsed.aiApiUrl || 'https://openrouter.ai/api/v1');
+          if (!appData.settings.aiModel) setAiModel(parsed.aiModel || 'qwen/qwen-3-coder:free');
+        }
       } catch (e) {
         console.error('初始化本地大模型配置失败:', e);
       }
