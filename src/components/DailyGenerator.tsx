@@ -330,25 +330,73 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     showToast(`已采用 ${formatRouteLabel(result.routeInfo) || formatSelectedModel(result.requestedModel)} 的候选日报。`, 'success');
   };
 
+  const copyTextToClipboard = async (text: string) => {
+    const value = text || '';
+    if (!value.trim()) return false;
+
+    let textarea: HTMLTextAreaElement | null = null;
+    try {
+      textarea = document.createElement('textarea');
+      textarea.value = value;
+      textarea.setAttribute('readonly', 'true');
+      textarea.style.position = 'fixed';
+      textarea.style.left = '-9999px';
+      textarea.style.top = '0';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.focus();
+      textarea.select();
+      textarea.setSelectionRange(0, textarea.value.length);
+      if (document.execCommand('copy')) {
+        return true;
+      }
+    } catch (err) {
+      console.warn('备用复制方案失败:', err);
+    } finally {
+      if (textarea?.parentNode) {
+        textarea.parentNode.removeChild(textarea);
+      }
+    }
+
+    if (window.isSecureContext && navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(value);
+        return true;
+      } catch (err) {
+        console.warn('Clipboard API 复制失败:', err);
+      }
+    }
+
+    return false;
+  };
+
   const copyPromptAndOpenDoubao = async (
     prompt: string,
     successMessage: string,
     blockedMessage: string,
     toastType: 'success' | 'error' | 'info' = 'success'
   ) => {
-    let copied = false;
-    try {
-      await navigator.clipboard.writeText(prompt);
-      copied = true;
-    } catch (err) {
-      console.warn('复制豆包 Prompt 失败:', err);
-    }
-
+    const copyResult = copyTextToClipboard(prompt);
     const newWindow = window.open(DOUBAO_CHAT_URL, '_blank');
+    const copied = await copyResult;
+
     if (newWindow) {
       showToast(copied ? successMessage : '已打开豆包新对话，请手动复制右侧 Prompt 后粘贴。', copied ? toastType : 'info');
     } else {
       showToast(copied ? blockedMessage : '浏览器拦截了豆包窗口，请手动复制右侧 Prompt 后打开豆包。', 'info');
+    }
+    return copied;
+  };
+
+  const handleCopyPromptAndOpenDoubao = async (fieldName: string) => {
+    const copied = await copyPromptAndOpenDoubao(
+      content,
+      'Prompt 已复制，并已打开豆包新对话，请粘贴后发送。',
+      'Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
+    );
+    if (copied) {
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 1500);
     }
   };
 
@@ -907,10 +955,15 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   };
 
   // 复制特定字段
-  const copyToClipboard = (text: string, fieldName: string) => {
-    navigator.clipboard.writeText(text);
+  const copyToClipboard = async (text: string, fieldName: string) => {
+    const copied = await copyTextToClipboard(text);
+    if (!copied) {
+      showToast('复制失败，请手动选中内容复制。', 'error');
+      return;
+    }
+    const fieldLabel = fieldName === 'title' ? '日志名称' : fieldName === 'all' ? '全套字段' : mode === 'ai_prompt' ? 'Prompt' : '日志内容';
     setCopiedField(fieldName);
-    showToast(`${fieldName === 'title' ? '日志名称' : '日志内容'}已成功复制到剪贴板`, 'info');
+    showToast(`${fieldLabel}已成功复制到剪贴板`, 'info');
     setTimeout(() => setCopiedField(null), 1500);
   };
 
@@ -918,7 +971,6 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   const copyAllFieldsText = () => {
     const text = `日志名称：${title}\n工时(h)：${hours}\n日志日期：${selectedDate}\n部门协作：${cooperation ? '是' : '否'}\n工作难点：${difficulty ? '是' : '否'}\n日志内容：\n${content}`;
     copyToClipboard(text, 'all');
-    showToast('全套日报表单字段已一键复制', 'success');
   };
 
   // 保存到本地数据库
@@ -1599,33 +1651,26 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           {mode === 'ai_prompt' && content.trim() && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
               <button
-                onClick={async () => {
-                  setCopiedField('ai_prompt_btn');
-                  await copyPromptAndOpenDoubao(
-                    content,
-                    '📋 Prompt 已复制，并已打开豆包新对话，请粘贴后发送。',
-                    '📋 Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
-                  );
-                  setTimeout(() => setCopiedField(null), 1500);
-                }}
+                onClick={() => handleCopyPromptAndOpenDoubao('ai_prompt_btn')}
                 className="clickable"
                 style={{
                   width: '100%',
-                  padding: '10px',
+                  padding: '13px',
                   borderRadius: '8px',
-                  background: 'rgba(59, 130, 246, 0.1)',
-                  border: '1px solid rgba(59, 130, 246, 0.3)',
-                  color: 'var(--accent-color)',
-                  fontSize: '12px',
-                  fontWeight: '600',
+                  background: 'linear-gradient(135deg, #22C55E 0%, #2563EB 100%)',
+                  border: '1px solid rgba(147, 197, 253, 0.55)',
+                  color: '#ffffff',
+                  fontSize: '13px',
+                  fontWeight: '800',
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  gap: '6px'
+                  gap: '8px',
+                  boxShadow: '0 10px 24px rgba(37, 99, 235, 0.28)'
                 }}
               >
-                {copiedField === 'ai_prompt_btn' ? <Check size={14} color="#10B981" /> : <Sparkles size={14} />}
-                <span>{copiedField === 'ai_prompt_btn' ? '已复制 Prompt！正在打开豆包...' : '📋 复制 Prompt 并前往豆包'}</span>
+                {copiedField === 'ai_prompt_btn' ? <Check size={16} color="#ffffff" /> : <Copy size={16} />}
+                <span>{copiedField === 'ai_prompt_btn' ? '已复制，正在打开豆包' : '复制 Prompt 并打开豆包'}</span>
               </button>
             </div>
           )}
@@ -1712,6 +1757,53 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
               </button>
             </div>
           </div>
+
+          {mode === 'ai_prompt' && content.trim() && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: '12px',
+                flexWrap: 'wrap',
+                padding: '12px 14px',
+                borderRadius: '8px',
+                background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.18) 0%, rgba(37, 99, 235, 0.18) 100%)',
+                border: '1px solid rgba(147, 197, 253, 0.34)'
+              }}
+            >
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: '220px', flex: 1 }}>
+                <span style={{ fontSize: '13px', color: '#F8FAFC', fontWeight: 800 }}>
+                  Prompt 已准备好
+                </span>
+                <span style={{ fontSize: '11px', color: '#BFDBFE', lineHeight: 1.5 }}>
+                  点击右侧按钮复制并打开豆包，进入新对话后直接粘贴发送。
+                </span>
+              </div>
+              <button
+                onClick={() => handleCopyPromptAndOpenDoubao('ai_prompt_cta')}
+                className="clickable"
+                style={{
+                  minWidth: '210px',
+                  padding: '11px 14px',
+                  borderRadius: '8px',
+                  background: 'linear-gradient(135deg, #22C55E 0%, #2563EB 100%)',
+                  border: '1px solid rgba(255, 255, 255, 0.28)',
+                  color: '#ffffff',
+                  fontSize: '13px',
+                  fontWeight: 800,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '8px',
+                  boxShadow: '0 12px 26px rgba(37, 99, 235, 0.28)'
+                }}
+              >
+                {copiedField === 'ai_prompt_cta' ? <Check size={16} color="#ffffff" /> : <Copy size={16} />}
+                <span>{copiedField === 'ai_prompt_cta' ? '已复制，正在打开豆包' : '复制 Prompt 并打开豆包'}</span>
+              </button>
+            </div>
+          )}
 
           {compareMode && compareResults.length > 0 && (
             <div
