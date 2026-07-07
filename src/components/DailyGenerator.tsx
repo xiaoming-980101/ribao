@@ -37,6 +37,15 @@ type RouteInfo = {
   status?: 'success' | 'error';
 };
 
+type CompareResult = {
+  id: string;
+  requestedModel: string;
+  title?: string;
+  content?: string;
+  routeInfo?: RouteInfo;
+  error?: string;
+};
+
 const formatSelectedModel = (modelId: string) => modelId.split('/').pop() || modelId;
 
 const formatRouteLabel = (routeInfo?: RouteInfo | null) => {
@@ -53,6 +62,27 @@ const formatRouteTitle = (routeInfo?: RouteInfo | null) => {
   const retryText = routeInfo.retryAfterSeconds ? `；建议 ${routeInfo.retryAfterSeconds} 秒后重试` : '';
   return `请求模型：${routeInfo.requestedModel || '未知'}；实际模型：${routeInfo.actualModel || '未知'}${routeInfo.providerName ? `；Provider：${routeInfo.providerName}` : ''}${retryText}`;
 };
+
+const AUTO_FALLBACK_MODELS = [
+  'openrouter/free',
+  'meta-llama/llama-3.3-70b-instruct:free',
+  'google/gemma-2-9b-it:free',
+  'qwen/qwen-2.5-72b-instruct:free',
+  'qwen/qwen-3-coder:free'
+];
+
+const buildFallbackQueue = (currentModel: string) => {
+  const seen = new Set<string>();
+  return [currentModel, ...AUTO_FALLBACK_MODELS]
+    .filter((modelId) => {
+      if (!modelId || seen.has(modelId)) return false;
+      seen.add(modelId);
+      return true;
+    })
+    .slice(0, 5);
+};
+
+const buildDefaultCompareModels = (currentModel: string) => buildFallbackQueue(currentModel).slice(0, 3);
 
 export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNavigateToTab }: DailyGeneratorProps) {
   // 当前选择的日期 (YYYY-MM-DD)
@@ -95,6 +125,9 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     aiModel: 'qwen/qwen-3-coder:free'
   });
   const [lastRouteInfo, setLastRouteInfo] = useState<RouteInfo | null>(null);
+  const [compareMode, setCompareMode] = useState<boolean>(false);
+  const [compareModels, setCompareModels] = useState<string[]>([]);
+  const [compareResults, setCompareResults] = useState<CompareResult[]>([]);
 
   const loadAISettings = () => {
     const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
@@ -131,6 +164,12 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   useEffect(() => {
     setLastRouteInfo(null);
   }, [aiSettings.aiModel]);
+
+  useEffect(() => {
+    if (compareModels.length === 0) {
+      setCompareModels(buildDefaultCompareModels(aiSettings.aiModel));
+    }
+  }, [aiSettings.aiModel, compareModels.length]);
 
   // 同步用户在主界面上临时更改的配置，静默向后端保存偏好
   const handleJobChange = async (newJob: string) => {
@@ -171,6 +210,35 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     localStorage.setItem(`winner_daily_ai_settings_${currentLoggedUser}`, JSON.stringify(nextSettings));
     localStorage.setItem('winner_daily_ai_settings', JSON.stringify(nextSettings));
     showToast(`🎯 已快捷切换大模型为: ${formatSelectedModel(newModel)}`, 'success');
+  };
+
+  const toggleCompareModel = (modelId: string) => {
+    setCompareModels((prev) => {
+      if (prev.includes(modelId)) {
+        return prev.length > 1 ? prev.filter((id) => id !== modelId) : prev;
+      }
+      if (prev.length >= 3) {
+        showToast('最多同时对比 3 个模型，可以先取消一个再选择。', 'info');
+        return prev;
+      }
+      return [...prev, modelId];
+    });
+  };
+
+  const applyCompareResult = (result: CompareResult) => {
+    if (!result.title || !result.content) return;
+    setTitle(result.title);
+    setHours(8);
+    setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
+    setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
+    setContent(result.content);
+    if (result.routeInfo) setLastRouteInfo({ ...result.routeInfo, status: 'success' });
+    setSessionHistory((prev) => {
+      const next = [...prev, result.content || ''];
+      if (next.length > 8) next.shift();
+      return next;
+    });
+    showToast(`已采用 ${formatRouteLabel(result.routeInfo) || formatSelectedModel(result.requestedModel)} 的候选日报。`, 'success');
   };
 
   // 所有模型自选与搜索状态
@@ -359,8 +427,11 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       }
       setSaveStatus('saving'); // 借用保存 loading 状态
       setLastRouteInfo(null);
-      showToast(`🤖 正在联调大模型 [${formatSelectedModel(aiSettings.aiModel)}] 生成日报...`, 'info');
-      try {
+      const fallbackQueue = buildFallbackQueue(aiSettings.aiModel);
+      showToast(`🤖 正在联调大模型 [${formatSelectedModel(fallbackQueue[0])}] 生成日报...`, 'info');
+      let lastError: any = null;
+
+      const requestGenerate = async (modelToTry: string) => {
         const response = await fetch(`${BACKEND_URL}/api/generate`, {
           method: 'POST',
           headers: {
@@ -372,7 +443,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             mode, // 传递当前的工作模式状态 (用于空任务下的自适应预设)
             aiApiKey: aiSettings.aiApiKey,
             aiApiUrl: aiSettings.aiApiUrl,
-            aiModel: aiSettings.aiModel
+            aiModel: modelToTry
           })
         });
 
@@ -384,51 +455,154 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             errData = { error: '联调接口请求失败' };
           }
           const requestError: any = new Error(errData.error || '联调接口请求失败');
-          requestError.routeInfo = errData.routeInfo;
+          requestError.routeInfo = errData.routeInfo || { requestedModel: modelToTry };
           requestError.statusCode = response.status;
           throw requestError;
         }
 
-        const resData = await response.json();
-        if (resData.success) {
-          const routeInfo: RouteInfo | null = resData.routeInfo
-            ? { ...resData.routeInfo, status: 'success' }
-            : null;
-          setLastRouteInfo(routeInfo);
-          setTitle(resData.title);
-          setHours(8);
-          // 智能推导部门协作与工作难点
-          setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
-          setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
-          setContent(resData.content);
-          const routeLabel = formatRouteLabel(routeInfo);
-          showToast(`🎉 在线大模型日报生成成功！${routeLabel ? `实际模型：${routeLabel}` : '已填充表单。'}`, 'success');
+        return response.json();
+      };
 
-          // 加入去重会话缓存
-          setSessionHistory((prev) => {
-            const next = [...prev, resData.content];
-            if (next.length > 8) next.shift();
-            return next;
+      try {
+        if (compareMode) {
+          const selectedModels = (compareModels.length > 0 ? compareModels : buildDefaultCompareModels(aiSettings.aiModel)).slice(0, 3);
+          setCompareResults([]);
+          showToast(`🧪 正在同时对比 ${selectedModels.length} 个模型，请稍候...`, 'info');
+
+          const settledResults = await Promise.allSettled(
+            selectedModels.map(async (modelToTry, index) => {
+              const resData = await requestGenerate(modelToTry);
+              if (!resData.success) {
+                throw new Error('模型返回失败');
+              }
+              const routeInfo: RouteInfo = resData.routeInfo
+                ? { ...resData.routeInfo, status: 'success' }
+                : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
+              return {
+                id: `${modelToTry}-${index}-${Date.now()}`,
+                requestedModel: modelToTry,
+                title: resData.title,
+                content: resData.content,
+                routeInfo
+              } as CompareResult;
+            })
+          );
+
+          const results: CompareResult[] = settledResults.map((result, index) => {
+            const requestedModel = selectedModels[index];
+            if (result.status === 'fulfilled') {
+              return result.value;
+            }
+            const reason: any = result.reason;
+            const routeInfo: RouteInfo = reason?.routeInfo
+              ? { ...reason.routeInfo, requestedModel: reason.routeInfo.requestedModel || requestedModel, status: 'error' }
+              : { requestedModel, actualModel: requestedModel, status: 'error' };
+            return {
+              id: `${requestedModel}-${index}-${Date.now()}`,
+              requestedModel,
+              routeInfo,
+              error: reason?.message || '模型请求失败'
+            };
           });
+
+          setCompareResults(results);
+          const firstSuccess = results.find((result) => result.content);
+          if (firstSuccess?.routeInfo) setLastRouteInfo(firstSuccess.routeInfo);
+
+          const successCount = results.filter((result) => result.content).length;
+          if (successCount > 0) {
+            showToast(`🧪 已生成 ${successCount} 份候选，请在右侧选择采用；不满意可重新对比。`, 'success');
+            return;
+          }
+
+          lastError = settledResults.find((result) => result.status === 'rejected');
+          const prompt = generateAIPrompt(userInput, job);
+          setCompareMode(false);
+          setMode('ai_prompt');
+          setTitle('复制提示词到豆包生成');
+          setHours(8);
+          setCooperation(false);
+          setDifficulty(false);
+          setContent(prompt);
+          try {
+            await navigator.clipboard.writeText(prompt);
+            showToast('📋 3 个模型都失败了，已暂停重试并复制豆包提示词。', 'error');
+          } catch (err) {
+            showToast('📋 3 个模型都失败了，已生成豆包提示词，请手动复制右侧内容。', 'error');
+          }
+          return;
         }
-      } catch (error: any) {
-        console.error('在线 AI 生成失败:', error);
-        const errMsg = (error.message || String(error)).toLowerCase();
-        const routeInfo: RouteInfo | null = error.routeInfo
-          ? { ...error.routeInfo, status: 'error' }
-          : null;
-        if (routeInfo) setLastRouteInfo(routeInfo);
-        const routeLabel = formatRouteLabel(routeInfo);
-        const retryText = routeInfo?.retryAfterSeconds ? `，约 ${routeInfo.retryAfterSeconds} 秒后可重试` : '';
-        
-        // 针对上游 API 发生 429 或者是被限流的状况进行明确避堵 Toast 引导
-        if (errMsg.includes('429') || errMsg.includes('too many requests') || errMsg.includes('limit')) {
-          showToast(`⚠️ ${routeLabel ? `实际模型 [${routeLabel}]` : '上游大模型'} 被限流了${retryText}，已为您降级为本地生成。`, 'error');
-        } else {
-          showToast(`❌ AI 生成失败${routeLabel ? `（实际模型：${routeLabel}）` : ''}: ${error.message || error}，已为您自动降级至本地生成。`, 'error');
+
+        for (let attemptIndex = 0; attemptIndex < fallbackQueue.length; attemptIndex++) {
+          const modelToTry = fallbackQueue[attemptIndex];
+          if (attemptIndex > 0) {
+            showToast(`🔁 自动切换到 [${formatSelectedModel(modelToTry)}] 重试生成...`, 'info');
+          }
+
+          try {
+            const resData = await requestGenerate(modelToTry);
+            if (resData.success) {
+              const routeInfo: RouteInfo | null = resData.routeInfo
+                ? { ...resData.routeInfo, status: 'success' }
+                : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
+              setLastRouteInfo(routeInfo);
+              setTitle(resData.title);
+              setHours(8);
+              // 智能推导部门协作与工作难点
+              setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
+              setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
+              setContent(resData.content);
+              const routeLabel = formatRouteLabel(routeInfo);
+              showToast(`🎉 在线大模型日报生成成功！${routeLabel ? `实际模型：${routeLabel}` : '已填充表单。'}`, 'success');
+
+              // 加入去重会话缓存
+              setSessionHistory((prev) => {
+                const next = [...prev, resData.content];
+                if (next.length > 8) next.shift();
+                return next;
+              });
+              return;
+            }
+          } catch (error: any) {
+            lastError = error;
+            console.error(`在线 AI 生成失败 (${modelToTry}):`, error);
+            const errMsg = (error.message || String(error)).toLowerCase();
+            const routeInfo: RouteInfo = error.routeInfo
+              ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error' }
+              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error' };
+            setLastRouteInfo(routeInfo);
+            const routeLabel = formatRouteLabel(routeInfo) || formatSelectedModel(modelToTry);
+            const retryText = routeInfo.retryAfterSeconds ? `，约 ${routeInfo.retryAfterSeconds} 秒后可重试` : '';
+            const canRetry = attemptIndex < fallbackQueue.length - 1;
+
+            if (canRetry) {
+              const reason = (errMsg.includes('429') || errMsg.includes('too many requests') || errMsg.includes('limit'))
+                ? `被限流了${retryText}`
+                : '返回异常';
+              showToast(`⚠️ ${routeLabel} ${reason}，正在自动尝试下一个模型...`, 'info');
+            }
+          }
         }
-        generateLocally(job);
+
+        const prompt = generateAIPrompt(userInput, job);
+        setCompareMode(false);
+        setMode('ai_prompt');
+        setTitle('复制提示词到豆包生成');
+        setHours(8);
+        setCooperation(false);
+        setDifficulty(false);
+        setContent(prompt);
+
+        try {
+          await navigator.clipboard.writeText(prompt);
+          showToast('📋 在线模型连续失败，已暂停重试并复制豆包提示词，请去豆包生成后粘回表单。', 'error');
+        } catch (err) {
+          showToast('📋 在线模型连续失败，已暂停重试并生成豆包提示词，请手动复制右侧内容。', 'error');
+        }
       } finally {
+        if (lastError) {
+          console.error('本轮在线 AI 自动切换后仍未成功:', lastError);
+        }
         setSaveStatus('idle');
       }
       return;
@@ -868,13 +1042,32 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
               ) : aiSettings.aiEnabled && (
                 <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                   <button
-                    onClick={() => handleQuickChangeModel('openrouter/free')}
+                    onClick={() => {
+                      setCompareMode((prev) => !prev);
+                      setCompareResults([]);
+                      setCompareModels((prev) => prev.length > 0 ? prev : buildDefaultCompareModels(aiSettings.aiModel));
+                    }}
                     style={{
                       padding: '3px 6px',
                       borderRadius: '4px',
-                      background: aiSettings.aiModel === 'openrouter/free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      color: aiSettings.aiModel === 'openrouter/free' ? '#60A5FA' : 'var(--text-secondary)',
-                      border: '1px solid ' + (aiSettings.aiModel === 'openrouter/free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                      background: compareMode ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      color: compareMode ? '#34D399' : 'var(--text-secondary)',
+                      border: '1px solid ' + (compareMode ? 'rgba(16, 185, 129, 0.4)' : 'transparent'),
+                      fontSize: '10px',
+                      cursor: 'pointer'
+                    }}
+                    title="一次选择最多 3 个模型，同时生成候选后手动采用"
+                  >
+                    对比{compareMode ? ` ${compareModels.length}/3` : ''}
+                  </button>
+                  <button
+                    onClick={() => compareMode ? toggleCompareModel('openrouter/free') : handleQuickChangeModel('openrouter/free')}
+                    style={{
+                      padding: '3px 6px',
+                      borderRadius: '4px',
+                      background: (compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      color: (compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? '#60A5FA' : 'var(--text-secondary)',
+                      border: '1px solid ' + ((compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
                       fontSize: '10px',
                       cursor: 'pointer'
                     }}
@@ -883,13 +1076,13 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                     备用路由
                   </button>
                   <button
-                    onClick={() => handleQuickChangeModel('qwen/qwen-3-coder:free')}
+                    onClick={() => compareMode ? toggleCompareModel('qwen/qwen-3-coder:free') : handleQuickChangeModel('qwen/qwen-3-coder:free')}
                     style={{
                       padding: '3px 6px',
                       borderRadius: '4px',
-                      background: aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      color: aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? '#60A5FA' : 'var(--text-secondary)',
-                      border: '1px solid ' + (aiSettings.aiModel === 'qwen/qwen-3-coder:free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                      background: (compareMode ? compareModels.includes('qwen/qwen-3-coder:free') : aiSettings.aiModel === 'qwen/qwen-3-coder:free') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      color: (compareMode ? compareModels.includes('qwen/qwen-3-coder:free') : aiSettings.aiModel === 'qwen/qwen-3-coder:free') ? '#60A5FA' : 'var(--text-secondary)',
+                      border: '1px solid ' + ((compareMode ? compareModels.includes('qwen/qwen-3-coder:free') : aiSettings.aiModel === 'qwen/qwen-3-coder:free') ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
                       fontSize: '10px',
                       cursor: 'pointer'
                     }}
@@ -898,13 +1091,13 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                     💻 Qwen3
                   </button>
                   <button
-                    onClick={() => handleQuickChangeModel('meta-llama/llama-3.3-70b-instruct:free')}
+                    onClick={() => compareMode ? toggleCompareModel('meta-llama/llama-3.3-70b-instruct:free') : handleQuickChangeModel('meta-llama/llama-3.3-70b-instruct:free')}
                     style={{
                       padding: '3px 6px',
                       borderRadius: '4px',
-                      background: aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      color: aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? '#60A5FA' : 'var(--text-secondary)',
-                      border: '1px solid ' + (aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free' ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                      background: (compareMode ? compareModels.includes('meta-llama/llama-3.3-70b-instruct:free') : aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                      color: (compareMode ? compareModels.includes('meta-llama/llama-3.3-70b-instruct:free') : aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free') ? '#60A5FA' : 'var(--text-secondary)',
+                      border: '1px solid ' + ((compareMode ? compareModels.includes('meta-llama/llama-3.3-70b-instruct:free') : aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free') ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
                       fontSize: '10px',
                       cursor: 'pointer'
                     }}
@@ -933,6 +1126,45 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                 </div>
               )}
             </div>
+
+            {compareMode && aiSettings.aiEnabled && (
+              <div
+                style={{
+                  marginTop: '6px',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  gap: '6px',
+                  fontSize: '10px',
+                  color: 'var(--text-secondary)'
+                }}
+              >
+                <span>对比模型:</span>
+                {compareModels.map((modelId) => (
+                  <button
+                    key={modelId}
+                    onClick={() => toggleCompareModel(modelId)}
+                    title="点击移除"
+                    style={{
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      border: '1px solid rgba(96, 165, 250, 0.25)',
+                      background: 'rgba(96, 165, 250, 0.1)',
+                      color: '#93C5FD',
+                      fontSize: '10px',
+                      cursor: compareModels.length > 1 ? 'pointer' : 'default',
+                      maxWidth: '180px',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    {formatSelectedModel(modelId)}
+                  </button>
+                ))}
+                <span style={{ color: 'var(--text-muted)' }}>最多 3 个</span>
+              </div>
+            )}
 
             {/* 主界面多模型检索切换悬浮卡片 */}
             {isDropdownOpen && aiSettings.aiEnabled && (
@@ -1000,15 +1232,19 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                       filtered.map((m) => {
                         const isRec = checkIsRecommended(m);
                         const isAuto = m.id.toLowerCase().includes('openrouter/free');
-                        const isSelected = aiSettings.aiModel === m.id;
+                        const isSelected = compareMode ? compareModels.includes(m.id) : aiSettings.aiModel === m.id;
                         return (
                           <div
                             key={m.id}
                             onClick={(e) => {
                               e.stopPropagation();
-                              handleQuickChangeModel(m.id);
-                              setIsDropdownOpen(false);
-                              setSearchQuery('');
+                              if (compareMode) {
+                                toggleCompareModel(m.id);
+                              } else {
+                                handleQuickChangeModel(m.id);
+                                setIsDropdownOpen(false);
+                                setSearchQuery('');
+                              }
                             }}
                             className="clickable"
                             style={{
@@ -1028,6 +1264,11 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                               {isAuto ? '[备用] ' : (isRec ? '🔥 ' : '')}{m.name}
                             </span>
                             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
+                              {compareMode && isSelected && (
+                                <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: 'rgba(96, 165, 250, 0.18)', color: '#60A5FA', fontWeight: '700' }}>
+                                  已选
+                                </span>
+                              )}
                               {isAuto && (
                                 <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6', fontWeight: '700' }}>
                                   首选
@@ -1089,8 +1330,8 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             )}
             <span>
               {saveStatus === 'saving' 
-                ? '🤖 大模型正在撰写中...' 
-                : (mode === 'ai_prompt' ? '一键生成豆包 Prompt' : '智能生成今日日报')
+                ? (compareMode ? '🧪 多模型正在对比中...' : '🤖 大模型正在撰写中...')
+                : (mode === 'ai_prompt' ? '一键生成豆包 Prompt' : (compareMode ? '多模型对比生成' : '智能生成今日日报'))
               }
             </span>
           </button>
@@ -1161,7 +1402,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
               <Sparkles size={32} style={{ color: '#818CF8', animation: 'spin 2s linear infinite' }} />
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '80%', alignItems: 'center' }}>
                 <span style={{ fontSize: '13px', color: '#E2E8F0', fontWeight: '600', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
-                  🤖 大模型正在撰写写实日报，请稍候...
+                  {compareMode ? '🧪 多个模型正在生成候选，请稍候...' : '🤖 大模型正在撰写写实日报，请稍候...'}
                 </span>
                 <div style={{
                   width: '100%',
@@ -1210,6 +1451,93 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
               </button>
             </div>
           </div>
+
+          {compareMode && compareResults.length > 0 && (
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '10px',
+                padding: '12px',
+                borderRadius: '8px',
+                background: 'rgba(96, 165, 250, 0.06)',
+                border: '1px solid rgba(96, 165, 250, 0.18)'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#BFDBFE' }}>多模型候选</div>
+                <button
+                  onClick={handleGenerate}
+                  disabled={saveStatus === 'saving'}
+                  style={{
+                    padding: '4px 8px',
+                    borderRadius: '6px',
+                    background: 'rgba(255,255,255,0.06)',
+                    border: '1px solid var(--glass-border)',
+                    color: 'var(--text-secondary)',
+                    fontSize: '11px',
+                    cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer'
+                  }}
+                >
+                  重新对比
+                </button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }}>
+                {compareResults.map((result) => {
+                  const routeLabel = formatRouteLabel(result.routeInfo) || result.requestedModel;
+                  const isSuccess = !!result.content;
+                  return (
+                    <div
+                      key={result.id}
+                      style={{
+                        padding: '10px',
+                        borderRadius: '8px',
+                        background: isSuccess ? 'rgba(15, 23, 42, 0.55)' : 'rgba(127, 29, 29, 0.16)',
+                        border: '1px solid ' + (isSuccess ? 'rgba(96, 165, 250, 0.2)' : 'rgba(248, 113, 113, 0.25)'),
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px',
+                        minHeight: '170px'
+                      }}
+                    >
+                      <div title={formatRouteTitle(result.routeInfo)} style={{ fontSize: '11px', color: isSuccess ? '#93C5FD' : '#FCA5A5', fontWeight: 700, wordBreak: 'break-all' }}>
+                        {routeLabel}
+                      </div>
+                      {isSuccess ? (
+                        <>
+                          <div style={{ fontSize: '12px', color: '#FDE68A', fontWeight: 700 }}>{result.title}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.55, whiteSpace: 'pre-wrap', maxHeight: '118px', overflow: 'auto' }}>
+                            {result.content}
+                          </div>
+                          <button
+                            onClick={() => applyCompareResult(result)}
+                            style={{
+                              marginTop: 'auto',
+                              padding: '6px 8px',
+                              borderRadius: '6px',
+                              background: 'rgba(59, 130, 246, 0.22)',
+                              border: '1px solid rgba(59, 130, 246, 0.35)',
+                              color: '#BFDBFE',
+                              fontSize: '11px',
+                              fontWeight: 700,
+                              cursor: 'pointer'
+                            }}
+                          >
+                            采用这版
+                          </button>
+                        </>
+                      ) : (
+                        <div style={{ fontSize: '11px', color: '#FCA5A5', lineHeight: 1.5, wordBreak: 'break-word' }}>
+                          {result.error || '模型请求失败'}
+                          {result.routeInfo?.retryAfterSeconds ? `（${result.routeInfo.retryAfterSeconds}s 后可重试）` : ''}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* 表单字段区 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
