@@ -467,7 +467,7 @@ app.post('/api/reset', (req, res) => {
 // API: 在线调用 AI 生成日报 (多用户 Key 隔离中转代理模式，后端零留存)
 app.post('/api/generate', async (req, res) => {
   const username = (req.headers['x-user-name'] || 'admin').trim().toLowerCase();
-  const { userInput, job, customJobName, tone, mode, aiApiKey, aiApiUrl, aiModel } = req.body;
+  const { userInput, job, customJobName, tone, mode, currentTitle, currentContent, aiApiKey, aiApiUrl, aiModel } = req.body;
 
   const db = readDB();
   const user = db.users[username] || { settings: {} };
@@ -493,8 +493,25 @@ app.post('/api/generate', async (req, res) => {
     });
   }
 
+  const isDoubaoPromptMode = mode === 'doubao_prompt';
+
+  if (mode === 'tweak' && !String(currentContent || '').trim()) {
+    return res.status(400).json({
+      error: '当前没有可微调的日报内容，请先生成日报。',
+      routeInfo: {
+        requestedModel: finalApiModel,
+        actualModel: finalApiModel,
+        statusCode: 400,
+        errorType: 'empty'
+      }
+    });
+  }
+
   const jobName = getJobDisplayName(job, customJobName);
-  const tasksText = buildTaskSeed(userInput, job, mode, customJobName);
+  const isTweakMode = mode === 'tweak';
+  const promptTaskMode = isDoubaoPromptMode ? 'idle' : mode;
+  const tasksText = (isTweakMode || isDoubaoPromptMode) ? '' : buildTaskSeed(userInput, job, promptTaskMode, customJobName);
+  const doubaoTasksText = buildTaskSeed(userInput, job, userInput && String(userInput).trim() ? 'task' : 'idle', customJobName);
 
   const examples = job === 'designer' ? `
 * 不推荐（太虚太浮夸）：
@@ -517,8 +534,39 @@ app.post('/api/generate', async (req, res) => {
     ? '语气可以更像自然流水账，但仍要具体、可信，不要过度口语到像聊天。'
     : '语气保持专业严谨，但不要官腔、不要夸大成果。';
 
-  const systemPrompt = `你是一个专业 ${jobName}，擅长把当天真实工作记录整理成平实、具体、有执行细节的公司内部日报。`;
-  const userPrompt = `请把下面这段今日工作记录整理成一份日常工作日志。
+  const systemPrompt = isDoubaoPromptMode
+    ? `你是一个专业提示词工程师，熟悉 ${jobName} 的公司日报写作。`
+    : `你是一个专业 ${jobName}，擅长把当天真实工作记录整理成平实、具体、有执行细节的公司内部日报。`;
+  const userPrompt = isDoubaoPromptMode ? `请生成一段可以直接复制到豆包的新对话里使用的中文提示词，目标是让豆包帮我写一份 ${jobName} 的公司内部日报。
+
+今日工作记录：${doubaoTasksText}
+
+生成提示词要求：
+1. 提示词要以“你是一个专业 ${jobName}”开头，用户复制后可以直接发给豆包。
+2. 提示词里要明确要求豆包输出“标题”和“内容”，内容必须是 3 条，每条 45 到 70 个中文字左右。
+3. 语气要求：${toneHint}
+4. 重点要求写实、具体、有过程，不要夸张成果，不要编造数据、奖项或上线影响。
+5. 如果今日工作记录偏日常维护，也要让豆包自然补充检查、整理、复测、归档等合理细节。
+6. 只输出最终提示词本身，不要解释、不要 Markdown 代码块、不要前后缀说明。` : (isTweakMode ? `请对下面这份已经生成好的日报做“轻微微调”，目标是降低重复感、让表达更自然，但不要改岗位、不要换主题、不要增加夸张成果或编造不存在的工作。
+
+当前标题：${String(currentTitle || '').trim() || '未填写'}
+
+当前内容：
+${String(currentContent || '').trim()}
+
+微调要求：
+1. ${toneHint}
+2. 保留原本工作事实和大致结构，只替换部分措辞、补一点具体过程或检查结果。
+3. 必须仍然写成 3 条内容，每条 45 到 70 个中文字左右，总体约 170 到 230 字。
+4. 不要把内容改成本地模板式“日常维护”，也不要偏离当前日报已经写到的工作范围。
+5. 标题 8 到 15 个字，具体一点，可在原标题基础上小幅改写。
+
+请严格按照以下格式直接输出（不要有任何多余的 Markdown 代码块或前后缀解释说明）：
+标题：[微调后的日志标题]
+内容：
+1. [第一条微调后的内容]
+2. [第二条微调后的内容]
+3. [第三条微调后的内容]` : `请把下面这段今日工作记录整理成一份日常工作日志。
 
 今日工作记录：${tasksText}
 
@@ -537,7 +585,7 @@ ${examples}
 内容：
 1. [第一条工作内容，45 到 70 个中文字，写实有过程]
 2. [第二条工作内容，45 到 70 个中文字，写实有过程]
-3. [第三条工作内容，45 到 70 个中文字，带检查或整理结果]`;
+3. [第三条工作内容，45 到 70 个中文字，带检查或整理结果]`);
 
   try {
     const apiBaseUrl = finalApiUrl || 'https://openrouter.ai/api/v1';
@@ -600,6 +648,16 @@ ${examples}
 
     if (rawText.length < 15) {
       throw createGenerateError('API 平台返回内容过短，未形成可用日报，请稍后重试或切换其他模型。', 502, routeInfo, 'empty');
+    }
+
+    if (isDoubaoPromptMode) {
+      res.json({
+        success: true,
+        title: '复制提示词到豆包生成',
+        content: rawText,
+        routeInfo
+      });
+      return;
     }
 
     const { title, content } = parseGeneratedLog(rawText);

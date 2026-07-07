@@ -391,6 +391,55 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     }
   };
 
+  const requestGenerate = async (modelToTry: string, overrides: Record<string, any> = {}) => {
+    const response = await fetch(`${BACKEND_URL}/api/generate`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-User-Name': getCurrentUser()
+      },
+      body: JSON.stringify({
+        userInput,
+        job,
+        customJobName,
+        tone,
+        mode,
+        aiApiKey: aiSettings.aiApiKey,
+        aiApiUrl: aiSettings.aiApiUrl,
+        aiModel: modelToTry,
+        ...overrides
+      })
+    });
+
+    if (!response.ok) {
+      let errData: any = {};
+      try {
+        errData = await response.json();
+      } catch (e) {
+        errData = { error: '联调接口请求失败' };
+      }
+      const requestError: any = new Error(errData.error || '联调接口请求失败');
+      requestError.statusCode = response.status;
+      requestError.routeInfo = {
+        ...(errData.routeInfo || { requestedModel: modelToTry }),
+        statusCode: response.status,
+        errorType: errData.routeInfo?.errorType || classifyGenerateError(errData.error || '联调接口请求失败', response.status)
+      };
+      throw requestError;
+    }
+
+    return response.json();
+  };
+
+  const prepareFallbackQueue = async () => {
+    let availableModels = modelList;
+    if (!hasUsableFreeModels(availableModels)) {
+      showToast('🔄 正在刷新当前 Key 可用的免费模型列表...', 'info');
+      availableModels = await refreshAvailableModels();
+    }
+    return buildFallbackQueue(aiSettings.aiModel, availableModels, aiSettings.aiApiUrl);
+  };
+
   useEffect(() => {
     if (appData.settings) {
       setJob(appData.settings.job || 'frontend');
@@ -532,16 +581,76 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   const handleGenerate = async () => {
     // 移除了局部的 const job = appData.settings.job，直接采用组件的 job State
     if (mode === 'ai_prompt') {
-      const prompt = generateAIPrompt(userInput, job, customJobName, tone);
+      const fallbackPrompt = generateAIPrompt(userInput, job, customJobName, tone);
       setTitle('从大模型复制结果粘贴至此');
       setHours(8);
       setCooperation(false);
       setDifficulty(false);
-      setContent(prompt);
+      setContent(fallbackPrompt);
+
+      if (!aiSettings.aiEnabled || !aiSettings.aiApiKey) {
+        await copyPromptAndOpenDoubao(
+          fallbackPrompt,
+          '📋 已使用本地内置 Prompt，并打开豆包新对话，请粘贴后发送。',
+          '📋 已使用本地内置 Prompt；豆包窗口被拦截，请手动打开豆包粘贴。'
+        );
+        return;
+      }
+
+      setSaveStatus('saving');
+      setLastRouteInfo(null);
+      let selectedPrompt = fallbackPrompt;
+      let promptGeneratedByAI = false;
+
+      try {
+        const fallbackQueue = await prepareFallbackQueue();
+        if (fallbackQueue.length === 0) {
+          showToast('⚠️ 当前上游没有可用模型，已改用本地内置 Prompt。', 'info');
+        }
+
+        for (let attemptIndex = 0; attemptIndex < fallbackQueue.length; attemptIndex++) {
+          const modelToTry = fallbackQueue[attemptIndex];
+          try {
+            showToast(
+              attemptIndex === 0
+                ? `🤖 正在用大模型 [${formatSelectedModel(modelToTry)}] 生成豆包 Prompt...`
+                : `🔁 正在切换到 [${formatSelectedModel(modelToTry)}] 重试生成 Prompt...`,
+              'info'
+            );
+            const resData = await requestGenerate(modelToTry, { mode: 'doubao_prompt' });
+            if (resData.success && resData.content) {
+              selectedPrompt = resData.content;
+              promptGeneratedByAI = true;
+              const routeInfo: RouteInfo | null = resData.routeInfo
+                ? { ...resData.routeInfo, status: 'success' }
+                : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
+              setLastRouteInfo(routeInfo);
+              break;
+            }
+          } catch (error: any) {
+            const routeInfo: RouteInfo = error.routeInfo
+              ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
+              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error', statusCode: error.statusCode, errorType: classifyGenerateError(error.message, error.statusCode) };
+            setLastRouteInfo(routeInfo);
+            if (attemptIndex < fallbackQueue.length - 1) {
+              showToast(`⚠️ ${formatRouteLabel(routeInfo) || formatSelectedModel(modelToTry)} ${formatErrorReason(error.message, routeInfo)}，正在尝试下一个模型...`, 'info');
+            }
+          }
+        }
+      } finally {
+        setSaveStatus('idle');
+      }
+
+      setContent(selectedPrompt);
       await copyPromptAndOpenDoubao(
-        prompt,
-        '📋 Prompt 已复制，并已打开豆包新对话，请粘贴后发送。',
-        '📋 Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
+        selectedPrompt,
+        promptGeneratedByAI
+          ? '📋 大模型 Prompt 已复制，并已打开豆包新对话，请粘贴后发送。'
+          : '📋 大模型不可用，已复制本地内置 Prompt 并打开豆包新对话。',
+        promptGeneratedByAI
+          ? '📋 大模型 Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
+          : '📋 本地内置 Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。',
+        promptGeneratedByAI ? 'success' : 'info'
       );
       return;
     }
@@ -556,12 +665,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       }
       setSaveStatus('saving'); // 借用保存 loading 状态
       setLastRouteInfo(null);
-      let availableModels = modelList;
-      if (!hasUsableFreeModels(availableModels)) {
-        showToast('🔄 正在刷新当前 Key 可用的免费模型列表...', 'info');
-        availableModels = await refreshAvailableModels();
-      }
-      const fallbackQueue = buildFallbackQueue(aiSettings.aiModel, availableModels, aiSettings.aiApiUrl);
+      const fallbackQueue = await prepareFallbackQueue();
       if (fallbackQueue.length === 0) {
         setSaveStatus('idle');
         showToast('⚠️ 当前上游没有可用模型，请先在《个性化配置》同步模型列表或手动填写真实模型 ID。', 'error');
@@ -571,48 +675,9 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       showToast(`🤖 正在联调大模型 [${formatSelectedModel(fallbackQueue[0])}] 生成日报...`, 'info');
       let lastError: any = null;
 
-      const requestGenerate = async (modelToTry: string) => {
-        const response = await fetch(`${BACKEND_URL}/api/generate`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-User-Name': getCurrentUser()
-          },
-          body: JSON.stringify({
-            userInput,
-            job,
-            customJobName,
-            tone,
-            mode, // 传递当前的工作模式状态 (用于空任务下的自适应预设)
-            aiApiKey: aiSettings.aiApiKey,
-            aiApiUrl: aiSettings.aiApiUrl,
-            aiModel: modelToTry
-          })
-        });
-
-        if (!response.ok) {
-          let errData: any = {};
-          try {
-            errData = await response.json();
-          } catch (e) {
-            errData = { error: '联调接口请求失败' };
-          }
-          const requestError: any = new Error(errData.error || '联调接口请求失败');
-          requestError.statusCode = response.status;
-          requestError.routeInfo = {
-            ...(errData.routeInfo || { requestedModel: modelToTry }),
-            statusCode: response.status,
-            errorType: errData.routeInfo?.errorType || classifyGenerateError(errData.error || '联调接口请求失败', response.status)
-          };
-          throw requestError;
-        }
-
-        return response.json();
-      };
-
       try {
         if (compareMode) {
-          const sourceModels = compareModels.length > 0 ? compareModels : buildDefaultCompareModels(aiSettings.aiModel, availableModels, aiSettings.aiApiUrl);
+          const sourceModels = compareModels.length > 0 ? compareModels : fallbackQueue;
           const selectedModels = Array.from(new Set(sourceModels.map((modelId) => normalizeModelId(modelId, aiSettings.aiApiUrl)).filter((modelId) => !LEGACY_INVALID_MODELS.has(modelId)))).slice(0, 3);
           setCompareResults([]);
           showToast(`🧪 正在同时对比 ${selectedModels.length} 个模型，请稍候...`, 'info');
@@ -756,9 +821,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     generateLocally(job);
   };
 
-  // 智能微调（重新生成混淆，仅限日常/学习模式下或作为任务的补充优化）
-  const handleTweak = () => {
-    // 微调处也直接读取当前首页选择的 job
+  const tweakLocally = () => {
     if (mode === 'idle') {
       const result = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job, customJobName);
       setContent(result.content);
@@ -779,6 +842,75 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         }
         setContent(currentLines.join('\n'));
       }
+    }
+  };
+
+  // 智能微调：AI 可用时走大模型，AI 不可用时才使用本地模板兜底。
+  const handleTweak = async () => {
+    if (!content.trim()) return;
+
+    if (!aiSettings.aiEnabled || !aiSettings.aiApiKey || mode === 'ai_prompt') {
+      tweakLocally();
+      return;
+    }
+
+    setSaveStatus('saving');
+    setLastRouteInfo(null);
+    let lastError: any = null;
+
+    try {
+      const fallbackQueue = await prepareFallbackQueue();
+      if (fallbackQueue.length === 0) {
+        showToast('⚠️ 当前上游没有可用模型，请先同步模型列表或手动填写真实模型 ID。', 'error');
+        if (onNavigateToTab) onNavigateToTab('settings');
+        return;
+      }
+
+      for (let attemptIndex = 0; attemptIndex < fallbackQueue.length; attemptIndex++) {
+        const modelToTry = fallbackQueue[attemptIndex];
+        if (attemptIndex === 0) {
+          showToast(`🤖 正在用大模型 [${formatSelectedModel(modelToTry)}] 微调当前日报...`, 'info');
+        } else {
+          showToast(`🔁 微调失败，自动切换到 [${formatSelectedModel(modelToTry)}] 重试...`, 'info');
+        }
+
+        try {
+          const resData = await requestGenerate(modelToTry, {
+            mode: 'tweak',
+            currentTitle: title,
+            currentContent: content
+          });
+
+          if (resData.success) {
+            const routeInfo: RouteInfo | null = resData.routeInfo
+              ? { ...resData.routeInfo, status: 'success' }
+              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
+            setLastRouteInfo(routeInfo);
+            setTitle(resData.title || title);
+            setContent(resData.content);
+            setSessionHistory((prev) => {
+              const next = [...prev, resData.content];
+              if (next.length > 8) next.shift();
+              return next;
+            });
+            showToast(`🎉 大模型微调完成！${formatRouteLabel(routeInfo) ? `实际模型：${formatRouteLabel(routeInfo)}` : ''}`, 'success');
+            return;
+          }
+        } catch (error: any) {
+          lastError = error;
+          const routeInfo: RouteInfo = error.routeInfo
+            ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
+            : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error', statusCode: error.statusCode, errorType: classifyGenerateError(error.message, error.statusCode) };
+          setLastRouteInfo(routeInfo);
+          if (attemptIndex < fallbackQueue.length - 1) {
+            showToast(`⚠️ ${formatRouteLabel(routeInfo) || formatSelectedModel(modelToTry)} ${formatErrorReason(error.message, routeInfo)}，正在尝试下一个模型...`, 'info');
+          }
+        }
+      }
+
+      showToast(`❌ 大模型微调失败，已保留原内容。${lastError?.message ? `原因：${formatErrorReason(lastError.message, lastError.routeInfo)}` : ''}`, 'error');
+    } finally {
+      setSaveStatus('idle');
     }
   };
 
@@ -1482,7 +1614,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           </button>
 
           {/* 5. 豆包专属快捷栏 */}
-          {mode === 'ai_prompt' && content.startsWith('你是一个') && (
+          {mode === 'ai_prompt' && content.trim() && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
               <button
                 onClick={async () => {
@@ -1848,6 +1980,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
               {content && (
                 <button
                   onClick={handleTweak}
+                  disabled={saveStatus === 'saving'}
                   className="clickable"
                   style={{
                     padding: '10px 16px',
@@ -1858,12 +1991,14 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                     fontSize: '13px',
                     display: 'flex',
                     alignItems: 'center',
-                    gap: '6px'
+                    gap: '6px',
+                    cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer',
+                    opacity: saveStatus === 'saving' ? 0.75 : 1
                   }}
-                  title="重新洗牌内容，降低重复率"
+                  title={aiSettings.aiEnabled && aiSettings.aiApiKey ? '使用当前大模型微调内容，降低重复率' : '本地重新洗牌内容，降低重复率'}
                 >
-                  <RefreshCw size={14} />
-                  <span>智能微调</span>
+                  <RefreshCw size={14} style={saveStatus === 'saving' ? { animation: 'spin 1.2s linear infinite' } : undefined} />
+                  <span>{saveStatus === 'saving' ? '正在微调...' : '智能微调'}</span>
                 </button>
               )}
 
