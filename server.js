@@ -78,6 +78,77 @@ function isSafetyPlaceholder(rawText) {
   );
 }
 
+function findModelIdInText(text = '') {
+  const matches = [...String(text).matchAll(/\b([a-z0-9_-]+\/[a-z0-9][a-z0-9_.:+-]*(?::free)?)\b/gi)]
+    .map(match => match[1])
+    .filter(modelId => !modelId.split('/')[0].includes('.'));
+
+  return matches[0] || '';
+}
+
+function normalizeRetryAfter(value) {
+  if (value === null || value === undefined || value === '') return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.ceil(parsed) : undefined;
+}
+
+function extractRouteInfoFromApiData(apiData, requestedModel) {
+  const actualModel =
+    findModelIdInText(apiData?.model) ||
+    findModelIdInText(apiData?.model_id) ||
+    findModelIdInText(apiData?.choices?.[0]?.model) ||
+    findModelIdInText(apiData?.choices?.[0]?.message?.model) ||
+    findModelIdInText(JSON.stringify(apiData || {})) ||
+    requestedModel;
+
+  const providerName =
+    apiData?.provider_name ||
+    apiData?.provider?.name ||
+    apiData?.provider ||
+    apiData?.metadata?.provider_name ||
+    apiData?.choices?.[0]?.provider_name ||
+    '';
+
+  return {
+    requestedModel,
+    actualModel,
+    providerName,
+    isAutoRoute: requestedModel === 'openrouter/free'
+  };
+}
+
+function extractRouteInfoFromErrorData(errorData, requestedModel, retryAfterHeader) {
+  const errorObj = errorData?.error || errorData || {};
+  const metadata = errorObj?.metadata || errorData?.metadata || {};
+  const rawText = [
+    metadata.raw,
+    metadata.message,
+    errorObj.message,
+    typeof errorData === 'string' ? errorData : JSON.stringify(errorData || {})
+  ].filter(Boolean).join('\n');
+
+  const actualModel =
+    findModelIdInText(metadata.model) ||
+    findModelIdInText(metadata.model_id) ||
+    findModelIdInText(rawText) ||
+    requestedModel;
+
+  return {
+    requestedModel,
+    actualModel,
+    providerName: metadata.provider_name || metadata.provider || '',
+    retryAfterSeconds: normalizeRetryAfter(metadata.retry_after_seconds || metadata.retry_after_seconds_raw || retryAfterHeader),
+    isAutoRoute: requestedModel === 'openrouter/free'
+  };
+}
+
+function createGenerateError(message, statusCode = 500, routeInfo) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  error.routeInfo = routeInfo;
+  return error;
+}
+
 function parseGeneratedLog(rawText) {
   const cleaned = rawText
     .replace(/^```(?:\w+)?\s*/i, '')
@@ -417,37 +488,51 @@ ${examples}
 
     if (!response.ok) {
       const errText = await response.text();
-      throw new Error(`API 平台响应错误: ${response.status} - ${errText}`);
+      let errData = errText;
+      try {
+        errData = JSON.parse(errText);
+      } catch (e) {
+        // Keep the raw text if the upstream did not return JSON.
+      }
+      const routeInfo = extractRouteInfoFromErrorData(errData, finalApiModel, response.headers.get('retry-after'));
+      const upstreamMessage = typeof errData === 'string'
+        ? errData
+        : (errData?.error?.message || errData?.message || errText);
+      throw createGenerateError(`API 平台响应错误: ${response.status} - ${upstreamMessage}`, response.status, routeInfo);
     }
 
     const apiData = await response.json();
+    const routeInfo = extractRouteInfoFromApiData(apiData, finalApiModel);
 
     if (!apiData.choices || apiData.choices.length === 0 || !apiData.choices[0].message) {
-      throw new Error('API 平台返回了空响应，请切换其他免费推荐大模型或稍后重试！');
+      throw createGenerateError('API 平台返回了空响应，请切换其他免费推荐大模型或稍后重试！', 502, routeInfo);
     }
 
     const contentVal = apiData.choices[0].message.content;
     if (contentVal === null || contentVal === undefined) {
-      throw new Error('大模型内容被平台过滤或响应为空，请换个模型重新尝试！');
+      throw createGenerateError('大模型内容被平台过滤或响应为空，请换个模型重新尝试！', 502, routeInfo);
     }
 
     const rawText = contentVal.trim();
     
     // 拦截上游安全过滤器返回的无效占位文本，例如 "User Safety: safe"。
     if (isSafetyPlaceholder(rawText)) {
-      throw new Error('上游安全内容拦截: 大模型返回了安全审核占位词，请在左下角切换为其他大模型（如 Qwen3 或 Llama）重新尝试！');
+      throw createGenerateError('上游安全内容拦截: 大模型返回了安全审核占位词，请在左下角切换为其他大模型（如 Qwen3 或 Llama）重新尝试！', 502, routeInfo);
     }
 
     if (rawText.length < 15) {
-      throw new Error('API 平台返回内容过短，未形成可用日报，请稍后重试或切换其他模型。');
+      throw createGenerateError('API 平台返回内容过短，未形成可用日报，请稍后重试或切换其他模型。', 502, routeInfo);
     }
 
     const { title, content } = parseGeneratedLog(rawText);
 
-    res.json({ success: true, title, content });
+    res.json({ success: true, title, content, routeInfo });
   } catch (error) {
     console.error('在线 AI 生成请求失败:', error);
-    res.status(500).json({ error: error.message || '大模型生成请求失败' });
+    res.status(error.statusCode || 500).json({
+      error: error.message || '大模型生成请求失败',
+      routeInfo: error.routeInfo
+    });
   }
 });
 

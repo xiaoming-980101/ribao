@@ -28,6 +28,32 @@ const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) =>
   return false;
 };
 
+type RouteInfo = {
+  requestedModel?: string;
+  actualModel?: string;
+  providerName?: string;
+  retryAfterSeconds?: number;
+  isAutoRoute?: boolean;
+  status?: 'success' | 'error';
+};
+
+const formatSelectedModel = (modelId: string) => modelId.split('/').pop() || modelId;
+
+const formatRouteLabel = (routeInfo?: RouteInfo | null) => {
+  if (!routeInfo) return '';
+  const parts = [
+    routeInfo.actualModel || routeInfo.requestedModel,
+    routeInfo.providerName
+  ].filter(Boolean);
+  return parts.join(' · ');
+};
+
+const formatRouteTitle = (routeInfo?: RouteInfo | null) => {
+  if (!routeInfo) return '';
+  const retryText = routeInfo.retryAfterSeconds ? `；建议 ${routeInfo.retryAfterSeconds} 秒后重试` : '';
+  return `请求模型：${routeInfo.requestedModel || '未知'}；实际模型：${routeInfo.actualModel || '未知'}${routeInfo.providerName ? `；Provider：${routeInfo.providerName}` : ''}${retryText}`;
+};
+
 export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNavigateToTab }: DailyGeneratorProps) {
   // 当前选择的日期 (YYYY-MM-DD)
   const [selectedDate, setSelectedDate] = useState<string>('');
@@ -68,6 +94,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     aiApiUrl: 'https://openrouter.ai/api/v1',
     aiModel: 'qwen/qwen-3-coder:free'
   });
+  const [lastRouteInfo, setLastRouteInfo] = useState<RouteInfo | null>(null);
 
   const loadAISettings = () => {
     const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
@@ -100,6 +127,10 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   useEffect(() => {
     loadAISettings();
   }, [appData.settings]);
+
+  useEffect(() => {
+    setLastRouteInfo(null);
+  }, [aiSettings.aiModel]);
 
   // 同步用户在主界面上临时更改的配置，静默向后端保存偏好
   const handleJobChange = async (newJob: string) => {
@@ -134,11 +165,12 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
     const nextSettings = { ...aiSettings, aiModel: newModel };
     setAiSettings(nextSettings);
+    setLastRouteInfo(null);
     
     // 写入当前特定用户的本地隔离配置中
     localStorage.setItem(`winner_daily_ai_settings_${currentLoggedUser}`, JSON.stringify(nextSettings));
     localStorage.setItem('winner_daily_ai_settings', JSON.stringify(nextSettings));
-    showToast(`🎯 已快捷切换大模型为: ${newModel.split('/').pop() || newModel}`, 'success');
+    showToast(`🎯 已快捷切换大模型为: ${formatSelectedModel(newModel)}`, 'success');
   };
 
   // 所有模型自选与搜索状态
@@ -326,7 +358,8 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         return;
       }
       setSaveStatus('saving'); // 借用保存 loading 状态
-      showToast(`🤖 正在联调大模型 [${aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}] 生成日报...`, 'info');
+      setLastRouteInfo(null);
+      showToast(`🤖 正在联调大模型 [${formatSelectedModel(aiSettings.aiModel)}] 生成日报...`, 'info');
       try {
         const response = await fetch(`${BACKEND_URL}/api/generate`, {
           method: 'POST',
@@ -344,19 +377,32 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         });
 
         if (!response.ok) {
-          const errData = await response.json();
-          throw new Error(errData.error || '联调接口请求失败');
+          let errData: any = {};
+          try {
+            errData = await response.json();
+          } catch (e) {
+            errData = { error: '联调接口请求失败' };
+          }
+          const requestError: any = new Error(errData.error || '联调接口请求失败');
+          requestError.routeInfo = errData.routeInfo;
+          requestError.statusCode = response.status;
+          throw requestError;
         }
 
         const resData = await response.json();
         if (resData.success) {
+          const routeInfo: RouteInfo | null = resData.routeInfo
+            ? { ...resData.routeInfo, status: 'success' }
+            : null;
+          setLastRouteInfo(routeInfo);
           setTitle(resData.title);
           setHours(8);
           // 智能推导部门协作与工作难点
           setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
           setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
           setContent(resData.content);
-          showToast('🎉 在线大模型日报生成成功！已填充表单。', 'success');
+          const routeLabel = formatRouteLabel(routeInfo);
+          showToast(`🎉 在线大模型日报生成成功！${routeLabel ? `实际模型：${routeLabel}` : '已填充表单。'}`, 'success');
 
           // 加入去重会话缓存
           setSessionHistory((prev) => {
@@ -368,12 +414,18 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       } catch (error: any) {
         console.error('在线 AI 生成失败:', error);
         const errMsg = (error.message || String(error)).toLowerCase();
+        const routeInfo: RouteInfo | null = error.routeInfo
+          ? { ...error.routeInfo, status: 'error' }
+          : null;
+        if (routeInfo) setLastRouteInfo(routeInfo);
+        const routeLabel = formatRouteLabel(routeInfo);
+        const retryText = routeInfo?.retryAfterSeconds ? `，约 ${routeInfo.retryAfterSeconds} 秒后可重试` : '';
         
         // 针对上游 API 发生 429 或者是被限流的状况进行明确避堵 Toast 引导
         if (errMsg.includes('429') || errMsg.includes('too many requests') || errMsg.includes('limit')) {
-          showToast('⚠️ 上游大模型服务开小差了 (已被平台限流 429 啦)！已为您降级为本地生成。建议您切换 Qwen3 或 Llama 后再试。', 'error');
+          showToast(`⚠️ ${routeLabel ? `实际模型 [${routeLabel}]` : '上游大模型'} 被限流了${retryText}，已为您降级为本地生成。`, 'error');
         } else {
-          showToast(`❌ AI 生成失败: ${error.message || error}，已为您自动降级至本地生成。`, 'error');
+          showToast(`❌ AI 生成失败${routeLabel ? `（实际模型：${routeLabel}）` : ''}: ${error.message || error}，已为您自动降级至本地生成。`, 'error');
         }
         generateLocally(job);
       } finally {
@@ -773,10 +825,29 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                 >
                   {aiSettings.aiEnabled ? (
                     <>
-                      {aiSettings.aiModel === 'openrouter/free' ? '🟢 [备用路由]' : '🟢 🔥'} {aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}
+                      {aiSettings.aiModel === 'openrouter/free' ? '🟢 [备用路由]' : '🟢 🔥'} {formatSelectedModel(aiSettings.aiModel)}
                     </>
                   ) : '🔴 未启用大模型 (降级本地引擎)'}
                 </span>
+                {aiSettings.aiEnabled && lastRouteInfo && formatRouteLabel(lastRouteInfo) && (
+                  <span
+                    title={formatRouteTitle(lastRouteInfo)}
+                    style={{
+                      fontSize: '11px',
+                      fontWeight: 600,
+                      color: lastRouteInfo.status === 'error' ? '#F59E0B' : '#60A5FA',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      background: lastRouteInfo.status === 'error' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(96, 165, 250, 0.12)',
+                      border: '1px solid ' + (lastRouteInfo.status === 'error' ? 'rgba(245, 158, 11, 0.25)' : 'rgba(96, 165, 250, 0.25)'),
+                      wordBreak: 'break-all'
+                    }}
+                  >
+                    实际: {formatRouteLabel(lastRouteInfo)}
+                    {lastRouteInfo.status === 'error' ? '（失败）' : ''}
+                    {lastRouteInfo.retryAfterSeconds ? ` · ${lastRouteInfo.retryAfterSeconds}s 后重试` : ''}
+                  </span>
+                )}
               </div>
               {/* AI 状态行：已开启但未配置 Key 时显示警告，否则展示模型切换按钮 */}
               {aiSettings.aiEnabled && !aiSettings.aiApiKey ? (
