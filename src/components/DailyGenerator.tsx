@@ -589,11 +589,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       setContent(fallbackPrompt);
 
       if (!aiSettings.aiEnabled || !aiSettings.aiApiKey) {
-        await copyPromptAndOpenDoubao(
-          fallbackPrompt,
-          '📋 已使用本地内置 Prompt，并打开豆包新对话，请粘贴后发送。',
-          '📋 已使用本地内置 Prompt；豆包窗口被拦截，请手动打开豆包粘贴。'
-        );
+        showToast('📋 已生成本地内置 Prompt，请点击下方按钮复制并前往豆包。', 'info');
         return;
       }
 
@@ -642,14 +638,10 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       }
 
       setContent(selectedPrompt);
-      await copyPromptAndOpenDoubao(
-        selectedPrompt,
+      showToast(
         promptGeneratedByAI
-          ? '📋 大模型 Prompt 已复制，并已打开豆包新对话，请粘贴后发送。'
-          : '📋 大模型不可用，已复制本地内置 Prompt 并打开豆包新对话。',
-        promptGeneratedByAI
-          ? '📋 大模型 Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
-          : '📋 本地内置 Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。',
+          ? '📋 大模型 Prompt 已生成完成，请点击下方按钮复制并前往豆包。'
+          : '📋 大模型不可用，已生成本地内置 Prompt，请点击下方按钮复制并前往豆包。',
         promptGeneratedByAI ? 'success' : 'info'
       );
       return;
@@ -737,12 +729,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           setCooperation(false);
           setDifficulty(false);
           setContent(prompt);
-          await copyPromptAndOpenDoubao(
-            prompt,
-            '📋 3 个模型都失败了，已复制 Prompt 并打开豆包新对话。',
-            '📋 3 个模型都失败了，Prompt 已复制；豆包窗口被拦截，请手动打开。',
-            'error'
-          );
+          showToast('📋 3 个模型都失败了，已生成豆包 Prompt，请点击下方按钮复制并前往豆包。', 'error');
           return;
         }
 
@@ -802,12 +789,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         setDifficulty(false);
         setContent(prompt);
 
-        await copyPromptAndOpenDoubao(
-          prompt,
-          '📋 在线模型连续失败，已复制 Prompt 并打开豆包新对话。',
-          '📋 在线模型连续失败，Prompt 已复制；豆包窗口被拦截，请手动打开。',
-          'error'
-        );
+        showToast('📋 在线模型连续失败，已生成豆包 Prompt，请点击下方按钮复制并前往豆包。', 'error');
       } finally {
         if (lastError) {
           console.error('本轮在线 AI 自动切换后仍未成功:', lastError);
