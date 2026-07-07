@@ -24,13 +24,15 @@ export default function App() {
     logs: {},
     settings: {
       job: 'frontend',
+      customJobName: '',
       tone: 'professional',
       similarityThreshold: 50,
       rollingDays: 7,
       aiEnabled: false,
       aiApiKey: '',
       aiApiUrl: 'https://openrouter.ai/api/v1',
-      aiModel: 'qwen/qwen-3-coder:free'
+      aiModel: 'openrouter/free',
+      saveKeyToCloud: true
     }
   });
 
@@ -52,10 +54,12 @@ export default function App() {
       logs: {},
       settings: {
         job: 'frontend', tone: 'professional',
+        customJobName: '',
         similarityThreshold: 50, rollingDays: 7,
         aiEnabled: false, aiApiKey: '',
         aiApiUrl: 'https://openrouter.ai/api/v1',
-        aiModel: 'qwen/qwen-3-coder:free'
+        aiModel: 'openrouter/free',
+        saveKeyToCloud: true
       }
     });
   };

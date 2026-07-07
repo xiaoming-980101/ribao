@@ -1,12 +1,28 @@
 import React, { useState, useEffect } from 'react';
 import { Sparkles, Copy, Check, Save, AlertTriangle, RefreshCw, Layers } from 'lucide-react';
-import { LogEntry, AppData, saveLog, BACKEND_URL } from '../utils/storage';
+import {
+  LogEntry,
+  AppData,
+  saveLog,
+  saveSettings,
+  BACKEND_URL,
+  DEFAULT_AI_API_URL,
+  DEFAULT_AI_MODEL,
+  ModelOption,
+  getCurrentUser,
+  getUserAISettings,
+  saveUserAISettings,
+  loadCachedModels,
+  saveCachedModels,
+  isOpenRouterApiUrl
+} from '../utils/storage';
 import {
   expandUserInput,
   generateRandomFrontendDaily,
   calculateSimilarity,
   getSimilarityLevel,
-  generateAIPrompt
+  generateAIPrompt,
+  getJobDisplayName
 } from '../utils/generator';
 
 interface DailyGeneratorProps {
@@ -35,6 +51,8 @@ type RouteInfo = {
   retryAfterSeconds?: number;
   isAutoRoute?: boolean;
   status?: 'success' | 'error';
+  statusCode?: number;
+  errorType?: 'rate_limit' | 'no_access' | 'invalid_model' | 'safety' | 'empty' | 'unknown';
 };
 
 type CompareResult = {
@@ -60,29 +78,70 @@ const formatRouteLabel = (routeInfo?: RouteInfo | null) => {
 const formatRouteTitle = (routeInfo?: RouteInfo | null) => {
   if (!routeInfo) return '';
   const retryText = routeInfo.retryAfterSeconds ? `；建议 ${routeInfo.retryAfterSeconds} 秒后重试` : '';
-  return `请求模型：${routeInfo.requestedModel || '未知'}；实际模型：${routeInfo.actualModel || '未知'}${routeInfo.providerName ? `；Provider：${routeInfo.providerName}` : ''}${retryText}`;
+  const statusText = routeInfo.statusCode ? `；状态码：${routeInfo.statusCode}` : '';
+  return `请求模型：${routeInfo.requestedModel || '未知'}；实际模型：${routeInfo.actualModel || '未知'}${routeInfo.providerName ? `；Provider：${routeInfo.providerName}` : ''}${statusText}${retryText}`;
 };
 
-const AUTO_FALLBACK_MODELS = [
-  'openrouter/free',
-  'meta-llama/llama-3.3-70b-instruct:free',
-  'google/gemma-2-9b-it:free',
-  'qwen/qwen-2.5-72b-instruct:free',
-  'qwen/qwen-3-coder:free'
-];
+const DOUBAO_CHAT_URL = 'https://www.doubao.com/chat/';
 
-const buildFallbackQueue = (currentModel: string) => {
+const getDefaultModelOptions = (aiApiUrl: string): ModelOption[] => (
+  isOpenRouterApiUrl(aiApiUrl)
+    ? [{ id: DEFAULT_AI_MODEL, name: 'OpenRouter: Free Auto-Route (免费自动路由)', isFree: true }]
+    : []
+);
+
+const LEGACY_INVALID_MODELS = new Set([
+  'qwen/qwen-3-coder:free'
+]);
+
+const normalizeModelId = (modelId: string, aiApiUrl: string) => {
+  const isOpenRouterApi = isOpenRouterApiUrl(aiApiUrl);
+  if (!isOpenRouterApi && modelId === DEFAULT_AI_MODEL) return '';
+  if (LEGACY_INVALID_MODELS.has(modelId)) return isOpenRouterApi ? DEFAULT_AI_MODEL : '';
+  return modelId;
+};
+
+const buildFallbackQueue = (currentModel: string, models: ModelOption[] = [], aiApiUrl: string = DEFAULT_AI_API_URL) => {
   const seen = new Set<string>();
-  return [currentModel, ...AUTO_FALLBACK_MODELS]
+  const recommendedFree = models
+    .filter((model) => model.isFree && checkIsRecommended(model))
+    .map((model) => model.id);
+  const otherFree = models
+    .filter((model) => model.isFree && !checkIsRecommended(model))
+    .map((model) => model.id);
+
+  const defaultModels = getDefaultModelOptions(aiApiUrl).map((model) => model.id);
+
+  return [normalizeModelId(currentModel, aiApiUrl), ...defaultModels, ...recommendedFree, ...otherFree]
     .filter((modelId) => {
-      if (!modelId || seen.has(modelId)) return false;
+      if (!modelId || LEGACY_INVALID_MODELS.has(modelId) || seen.has(modelId)) return false;
       seen.add(modelId);
       return true;
     })
     .slice(0, 5);
 };
 
-const buildDefaultCompareModels = (currentModel: string) => buildFallbackQueue(currentModel).slice(0, 3);
+const buildDefaultCompareModels = (currentModel: string, models: ModelOption[] = [], aiApiUrl: string = DEFAULT_AI_API_URL) => buildFallbackQueue(currentModel, models, aiApiUrl).slice(0, 3);
+
+const classifyGenerateError = (message: string = '', statusCode?: number): RouteInfo['errorType'] => {
+  const lower = message.toLowerCase();
+  if (statusCode === 429 || lower.includes('429') || lower.includes('too many requests') || lower.includes('rate limit') || lower.includes('限流')) return 'rate_limit';
+  if (statusCode === 403 || lower.includes('403') || lower.includes('no access') || lower.includes('not allowed') || lower.includes('无权限')) return 'no_access';
+  if (statusCode === 400 && (lower.includes('not a valid model') || lower.includes('invalid model') || lower.includes('model id'))) return 'invalid_model';
+  if (lower.includes('安全审核占位') || lower.includes('safety') || lower.includes('moderation')) return 'safety';
+  if (lower.includes('空响应') || lower.includes('内容过短')) return 'empty';
+  return 'unknown';
+};
+
+const formatErrorReason = (error?: string, routeInfo?: RouteInfo) => {
+  const errorType = routeInfo?.errorType || classifyGenerateError(error || '', routeInfo?.statusCode);
+  if (errorType === 'no_access') return '当前 Key 无权限';
+  if (errorType === 'invalid_model') return '模型 ID 已失效';
+  if (errorType === 'rate_limit') return routeInfo?.retryAfterSeconds ? `限流，约 ${routeInfo.retryAfterSeconds} 秒后可重试` : '限流';
+  if (errorType === 'safety') return '上游安全审核占位';
+  if (errorType === 'empty') return '返回内容不可用';
+  return error || '模型请求失败';
+};
 
 export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNavigateToTab }: DailyGeneratorProps) {
   // 当前选择的日期 (YYYY-MM-DD)
@@ -114,46 +173,39 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
 
   // 本地实时选择的岗位与语气风格 (移动至主界面实时调控，消除延迟)
   const [job, setJob] = useState<string>('frontend');
+  const [customJobName, setCustomJobName] = useState<string>('');
   const [tone, setTone] = useState<string>('professional');
 
-  // 大模型偏好快捷读取与快速切换
   // 大模型偏好快捷读取与快速切换
   const [aiSettings, setAiSettings] = useState({
     aiEnabled: false,
     aiApiKey: '',
-    aiApiUrl: 'https://openrouter.ai/api/v1',
-    aiModel: 'qwen/qwen-3-coder:free'
+    aiApiUrl: DEFAULT_AI_API_URL,
+    aiModel: DEFAULT_AI_MODEL
   });
   const [lastRouteInfo, setLastRouteInfo] = useState<RouteInfo | null>(null);
   const [compareMode, setCompareMode] = useState<boolean>(false);
   const [compareModels, setCompareModels] = useState<string[]>([]);
   const [compareResults, setCompareResults] = useState<CompareResult[]>([]);
+  const [modelList, setModelList] = useState<ModelOption[]>([]);
+  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
+  const [searchQuery, setSearchQuery] = useState<string>('');
+  const isOpenRouterApi = isOpenRouterApiUrl(aiSettings.aiApiUrl);
 
   const loadAISettings = () => {
-    const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
-    const hasBackendKey = appData.settings?.aiApiKey;
-
-    const raw = localStorage.getItem(`winner_daily_ai_settings_${currentLoggedUser}`);
-    if (raw) {
-      try {
-        const parsed = JSON.parse(raw);
-        setAiSettings({
-          aiEnabled: appData.settings?.aiEnabled !== undefined ? appData.settings.aiEnabled : (parsed.aiEnabled || false),
-          aiApiKey: hasBackendKey ? appData.settings.aiApiKey : (parsed.aiApiKey || ''),
-          aiApiUrl: appData.settings?.aiApiUrl || parsed.aiApiUrl || 'https://openrouter.ai/api/v1',
-          aiModel: appData.settings?.aiModel || parsed.aiModel || 'qwen/qwen-3-coder:free'
-        });
-        return;
-      } catch (e) {
-        console.error('加载快捷大模型设置失败:', e);
-      }
+    const localAISettings = getUserAISettings();
+    const cloudSavePref = appData.settings?.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
+    const resolvedApiUrl = localAISettings.aiApiUrl || appData.settings?.aiApiUrl || DEFAULT_AI_API_URL;
+    const rawModel = localAISettings.aiModel || appData.settings?.aiModel || (isOpenRouterApiUrl(resolvedApiUrl) ? DEFAULT_AI_MODEL : '');
+    const resolvedModel = normalizeModelId(rawModel, resolvedApiUrl);
+    if ((localAISettings.aiModel && localAISettings.aiModel !== resolvedModel) || (appData.settings?.aiModel && appData.settings.aiModel !== resolvedModel)) {
+      saveUserAISettings({ aiModel: resolvedModel });
     }
-
     setAiSettings({
-      aiEnabled: appData.settings?.aiEnabled || false,
-      aiApiKey: appData.settings?.aiApiKey || '',
-      aiApiUrl: appData.settings?.aiApiUrl || 'https://openrouter.ai/api/v1',
-      aiModel: appData.settings?.aiModel || 'qwen/qwen-3-coder:free'
+      aiEnabled: localAISettings.aiEnabled !== undefined ? !!localAISettings.aiEnabled : (appData.settings?.aiEnabled || false),
+      aiApiKey: cloudSavePref ? (appData.settings?.aiApiKey || localAISettings.aiApiKey || '') : (localAISettings.aiApiKey || ''),
+      aiApiUrl: resolvedApiUrl,
+      aiModel: resolvedModel
     });
   };
 
@@ -162,54 +214,91 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   }, [appData.settings]);
 
   useEffect(() => {
+    const refreshFromStorage = () => loadAISettings();
+    window.addEventListener('focus', refreshFromStorage);
+    window.addEventListener('storage', refreshFromStorage);
+    window.addEventListener('winner-daily-settings-updated', refreshFromStorage);
+    return () => {
+      window.removeEventListener('focus', refreshFromStorage);
+      window.removeEventListener('storage', refreshFromStorage);
+      window.removeEventListener('winner-daily-settings-updated', refreshFromStorage);
+    };
+  }, [appData.settings]);
+
+  useEffect(() => {
     setLastRouteInfo(null);
   }, [aiSettings.aiModel]);
 
   useEffect(() => {
     if (compareModels.length === 0) {
-      setCompareModels(buildDefaultCompareModels(aiSettings.aiModel));
+      setCompareModels(buildDefaultCompareModels(aiSettings.aiModel, modelList, aiSettings.aiApiUrl));
     }
-  }, [aiSettings.aiModel, compareModels.length]);
+  }, [aiSettings.aiModel, aiSettings.aiApiUrl, compareModels.length, modelList]);
+
+  useEffect(() => {
+    const allowedModels = new Set([
+      aiSettings.aiModel,
+      ...modelList.map((model) => model.id),
+      ...getDefaultModelOptions(aiSettings.aiApiUrl).map((model) => model.id)
+    ].filter(Boolean));
+
+    setCompareModels((prev) => {
+      const filtered = prev
+        .map((modelId) => normalizeModelId(modelId, aiSettings.aiApiUrl))
+        .filter((modelId) => allowedModels.has(modelId) && !LEGACY_INVALID_MODELS.has(modelId));
+
+      if (filtered.length > 0) return Array.from(new Set(filtered)).slice(0, 3);
+      return buildDefaultCompareModels(aiSettings.aiModel, modelList, aiSettings.aiApiUrl);
+    });
+  }, [aiSettings.aiApiUrl, aiSettings.aiModel, modelList]);
 
   // 同步用户在主界面上临时更改的配置，静默向后端保存偏好
   const handleJobChange = async (newJob: string) => {
     setJob(newJob);
     try {
-      await fetch(`${BACKEND_URL}/api/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job: newJob, tone })
-      });
+      await saveSettings({ job: newJob, customJobName, tone });
       onSaveSuccess();
     } catch (e) {
       console.error('静默保存岗位偏好失败:', e);
     }
   };
 
+  const handleCustomJobNameBlur = async () => {
+    try {
+      await saveSettings({ job, customJobName: customJobName.trim(), tone });
+      onSaveSuccess();
+    } catch (e) {
+      console.error('静默保存自定义岗位失败:', e);
+    }
+  };
+
   const handleToneChange = async (newTone: string) => {
     setTone(newTone);
     try {
-      await fetch(`${BACKEND_URL}/api/settings`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ job, tone: newTone })
-      });
+      await saveSettings({ job, customJobName, tone: newTone });
       onSaveSuccess();
     } catch (e) {
       console.error('静默保存语气偏好失败:', e);
     }
   };
 
-  const handleQuickChangeModel = (newModel: string) => {
-    const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
-    const nextSettings = { ...aiSettings, aiModel: newModel };
+  const handleQuickChangeModel = async (newModel: string) => {
+    const normalizedModel = normalizeModelId(newModel, aiSettings.aiApiUrl);
+    const nextSettings = { ...aiSettings, aiModel: normalizedModel };
     setAiSettings(nextSettings);
     setLastRouteInfo(null);
-    
-    // 写入当前特定用户的本地隔离配置中
-    localStorage.setItem(`winner_daily_ai_settings_${currentLoggedUser}`, JSON.stringify(nextSettings));
-    localStorage.setItem('winner_daily_ai_settings', JSON.stringify(nextSettings));
-    showToast(`🎯 已快捷切换大模型为: ${formatSelectedModel(newModel)}`, 'success');
+    saveUserAISettings(nextSettings);
+    try {
+      await saveSettings({
+        aiEnabled: nextSettings.aiEnabled,
+        aiApiUrl: nextSettings.aiApiUrl,
+        aiModel: nextSettings.aiModel
+      });
+      onSaveSuccess();
+    } catch (e) {
+      console.error('静默保存快捷模型失败:', e);
+    }
+    showToast(`🎯 已快捷切换大模型为: ${formatSelectedModel(normalizedModel)}`, 'success');
   };
 
   const toggleCompareModel = (modelId: string) => {
@@ -241,38 +330,81 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     showToast(`已采用 ${formatRouteLabel(result.routeInfo) || formatSelectedModel(result.requestedModel)} 的候选日报。`, 'success');
   };
 
-  // 所有模型自选与搜索状态
-  const [modelList, setModelList] = useState<{ id: string; name: string; isFree: boolean }[]>([]);
-  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
-  const [searchQuery, setSearchQuery] = useState<string>('');
+  const copyPromptAndOpenDoubao = async (
+    prompt: string,
+    successMessage: string,
+    blockedMessage: string,
+    toastType: 'success' | 'error' | 'info' = 'success'
+  ) => {
+    let copied = false;
+    try {
+      await navigator.clipboard.writeText(prompt);
+      copied = true;
+    } catch (err) {
+      console.warn('复制豆包 Prompt 失败:', err);
+    }
 
-  // 初始化选择日期为今天 (当前系统时间 2026-07-02)
+    const newWindow = window.open(DOUBAO_CHAT_URL, '_blank');
+    if (newWindow) {
+      showToast(copied ? successMessage : '已打开豆包新对话，请手动复制右侧 Prompt 后粘贴。', copied ? toastType : 'info');
+    } else {
+      showToast(copied ? blockedMessage : '浏览器拦截了豆包窗口，请手动复制右侧 Prompt 后打开豆包。', 'info');
+    }
+  };
+
+  const hasUsableFreeModels = (models: ModelOption[]) => models.some((model) =>
+    model.isFree && model.id !== DEFAULT_AI_MODEL && !LEGACY_INVALID_MODELS.has(model.id)
+  );
+
+  const refreshAvailableModels = async () => {
+    if (!aiSettings.aiApiKey) return modelList;
+
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/models`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Name': getCurrentUser()
+        },
+        body: JSON.stringify({
+          aiApiKey: aiSettings.aiApiKey,
+          aiApiUrl: aiSettings.aiApiUrl
+        })
+      });
+
+      if (!response.ok) return modelList;
+      const resData = await response.json();
+      if (!resData.success || !Array.isArray(resData.models)) return modelList;
+
+      const cleanedModels: ModelOption[] = resData.models
+        .filter((model: ModelOption) => model?.id && !LEGACY_INVALID_MODELS.has(model.id));
+      const mergedModels = [
+        ...getDefaultModelOptions(aiSettings.aiApiUrl),
+        ...cleanedModels.filter((model) => model.id !== DEFAULT_AI_MODEL)
+      ];
+      setModelList(mergedModels);
+      saveCachedModels(mergedModels, aiSettings.aiApiUrl);
+      return mergedModels;
+    } catch (error) {
+      console.warn('自动刷新可用模型列表失败:', error);
+      return modelList;
+    }
+  };
+
   useEffect(() => {
-    // 根据后端 db.json 初始偏好同步组件 State 里的岗位与风格
     if (appData.settings) {
       setJob(appData.settings.job || 'frontend');
+      setCustomJobName(appData.settings.customJobName || '');
       setTone(appData.settings.tone || 'professional');
     }
+  }, [appData.settings]);
 
-    // 读取已缓存的云端完整模型列表供下拉搜索使用
-    const cached = localStorage.getItem('winner_daily_cached_models');
-    if (cached) {
-      try {
-        setModelList(JSON.parse(cached));
-      } catch (e) {
-        console.error('加载缓存大模型列表失败:', e);
-      }
-    } else {
-      // 预设默认大模型列表
-      setModelList([
-        { id: 'qwen/qwen-3-coder:free', name: 'Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)', isFree: true },
-        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct (免费)', isFree: true },
-        { id: 'google/gemma-2-9b-it:free', name: 'Google: Gemma 2 9B (免费)', isFree: true },
-        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen: Qwen 2.5 72B Instruct (免费)', isFree: true },
-        { id: 'openrouter/free', name: 'OpenRouter: Free Auto-Route (备用自动路由-可能不稳定)', isFree: true }
-      ]);
-    }
+  useEffect(() => {
+    setModelList(loadCachedModels(aiSettings.aiApiUrl) || getDefaultModelOptions(aiSettings.aiApiUrl));
+  }, [aiSettings.aiApiUrl]);
 
+  // 初始化选择日期为今天
+  useEffect(() => {
     const today = new Date();
     const yyyy = today.getFullYear();
     const mm = String(today.getMonth() + 1).padStart(2, '0');
@@ -352,11 +484,11 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     for (let attempts = 0; attempts < 10; attempts++) {
       let tempResult: any;
       if (mode === 'task') {
-        tempResult = expandUserInput(userInput + (attempts > 0 ? ` #${attempts}` : ''), job);
+        tempResult = expandUserInput(userInput + (attempts > 0 ? ` #${attempts}` : ''), job, customJobName);
       } else if (mode === 'idle') {
-        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job);
+        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job, customJobName);
       } else {
-        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, job);
+        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, job, customJobName);
       }
 
       let maxSim = 0;
@@ -400,20 +532,17 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   const handleGenerate = async () => {
     // 移除了局部的 const job = appData.settings.job，直接采用组件的 job State
     if (mode === 'ai_prompt') {
-      const prompt = generateAIPrompt(userInput, job);
+      const prompt = generateAIPrompt(userInput, job, customJobName, tone);
       setTitle('从大模型复制结果粘贴至此');
       setHours(8);
       setCooperation(false);
       setDifficulty(false);
       setContent(prompt);
-      
-      // 自动写入系统剪贴板，优化交互
-      try {
-        navigator.clipboard.writeText(prompt);
-        showToast('📋 写实豆包提示词已自动复制到系统剪贴板，快去大模型粘贴吧！', 'success');
-      } catch (err) {
-        showToast('📋 提示词生成成功！请手动复制右侧面板文本使用。', 'info');
-      }
+      await copyPromptAndOpenDoubao(
+        prompt,
+        '📋 Prompt 已复制，并已打开豆包新对话，请粘贴后发送。',
+        '📋 Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
+      );
       return;
     }
 
@@ -427,7 +556,18 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       }
       setSaveStatus('saving'); // 借用保存 loading 状态
       setLastRouteInfo(null);
-      const fallbackQueue = buildFallbackQueue(aiSettings.aiModel);
+      let availableModels = modelList;
+      if (!hasUsableFreeModels(availableModels)) {
+        showToast('🔄 正在刷新当前 Key 可用的免费模型列表...', 'info');
+        availableModels = await refreshAvailableModels();
+      }
+      const fallbackQueue = buildFallbackQueue(aiSettings.aiModel, availableModels, aiSettings.aiApiUrl);
+      if (fallbackQueue.length === 0) {
+        setSaveStatus('idle');
+        showToast('⚠️ 当前上游没有可用模型，请先在《个性化配置》同步模型列表或手动填写真实模型 ID。', 'error');
+        if (onNavigateToTab) onNavigateToTab('settings');
+        return;
+      }
       showToast(`🤖 正在联调大模型 [${formatSelectedModel(fallbackQueue[0])}] 生成日报...`, 'info');
       let lastError: any = null;
 
@@ -435,11 +575,14 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         const response = await fetch(`${BACKEND_URL}/api/generate`, {
           method: 'POST',
           headers: {
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'X-User-Name': getCurrentUser()
           },
           body: JSON.stringify({
             userInput,
             job,
+            customJobName,
+            tone,
             mode, // 传递当前的工作模式状态 (用于空任务下的自适应预设)
             aiApiKey: aiSettings.aiApiKey,
             aiApiUrl: aiSettings.aiApiUrl,
@@ -455,8 +598,12 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             errData = { error: '联调接口请求失败' };
           }
           const requestError: any = new Error(errData.error || '联调接口请求失败');
-          requestError.routeInfo = errData.routeInfo || { requestedModel: modelToTry };
           requestError.statusCode = response.status;
+          requestError.routeInfo = {
+            ...(errData.routeInfo || { requestedModel: modelToTry }),
+            statusCode: response.status,
+            errorType: errData.routeInfo?.errorType || classifyGenerateError(errData.error || '联调接口请求失败', response.status)
+          };
           throw requestError;
         }
 
@@ -465,7 +612,8 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
 
       try {
         if (compareMode) {
-          const selectedModels = (compareModels.length > 0 ? compareModels : buildDefaultCompareModels(aiSettings.aiModel)).slice(0, 3);
+          const sourceModels = compareModels.length > 0 ? compareModels : buildDefaultCompareModels(aiSettings.aiModel, availableModels, aiSettings.aiApiUrl);
+          const selectedModels = Array.from(new Set(sourceModels.map((modelId) => normalizeModelId(modelId, aiSettings.aiApiUrl)).filter((modelId) => !LEGACY_INVALID_MODELS.has(modelId)))).slice(0, 3);
           setCompareResults([]);
           showToast(`🧪 正在同时对比 ${selectedModels.length} 个模型，请稍候...`, 'info');
 
@@ -495,13 +643,13 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             }
             const reason: any = result.reason;
             const routeInfo: RouteInfo = reason?.routeInfo
-              ? { ...reason.routeInfo, requestedModel: reason.routeInfo.requestedModel || requestedModel, status: 'error' }
-              : { requestedModel, actualModel: requestedModel, status: 'error' };
+              ? { ...reason.routeInfo, requestedModel: reason.routeInfo.requestedModel || requestedModel, status: 'error', statusCode: reason.statusCode || reason.routeInfo.statusCode, errorType: reason.routeInfo.errorType || classifyGenerateError(reason?.message, reason.statusCode) }
+              : { requestedModel, actualModel: requestedModel, status: 'error', statusCode: reason?.statusCode, errorType: classifyGenerateError(reason?.message, reason?.statusCode) };
             return {
               id: `${requestedModel}-${index}-${Date.now()}`,
               requestedModel,
               routeInfo,
-              error: reason?.message || '模型请求失败'
+              error: formatErrorReason(reason?.message || '模型请求失败', routeInfo)
             };
           });
 
@@ -516,7 +664,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           }
 
           lastError = settledResults.find((result) => result.status === 'rejected');
-          const prompt = generateAIPrompt(userInput, job);
+          const prompt = generateAIPrompt(userInput, job, customJobName, tone);
           setCompareMode(false);
           setMode('ai_prompt');
           setTitle('复制提示词到豆包生成');
@@ -524,12 +672,12 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           setCooperation(false);
           setDifficulty(false);
           setContent(prompt);
-          try {
-            await navigator.clipboard.writeText(prompt);
-            showToast('📋 3 个模型都失败了，已暂停重试并复制豆包提示词。', 'error');
-          } catch (err) {
-            showToast('📋 3 个模型都失败了，已生成豆包提示词，请手动复制右侧内容。', 'error');
-          }
+          await copyPromptAndOpenDoubao(
+            prompt,
+            '📋 3 个模型都失败了，已复制 Prompt 并打开豆包新对话。',
+            '📋 3 个模型都失败了，Prompt 已复制；豆包窗口被拦截，请手动打开。',
+            'error'
+          );
           return;
         }
 
@@ -566,25 +714,21 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           } catch (error: any) {
             lastError = error;
             console.error(`在线 AI 生成失败 (${modelToTry}):`, error);
-            const errMsg = (error.message || String(error)).toLowerCase();
             const routeInfo: RouteInfo = error.routeInfo
-              ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error' }
-              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error' };
+              ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
+              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error', statusCode: error.statusCode, errorType: classifyGenerateError(error.message, error.statusCode) };
             setLastRouteInfo(routeInfo);
             const routeLabel = formatRouteLabel(routeInfo) || formatSelectedModel(modelToTry);
-            const retryText = routeInfo.retryAfterSeconds ? `，约 ${routeInfo.retryAfterSeconds} 秒后可重试` : '';
             const canRetry = attemptIndex < fallbackQueue.length - 1;
 
             if (canRetry) {
-              const reason = (errMsg.includes('429') || errMsg.includes('too many requests') || errMsg.includes('limit'))
-                ? `被限流了${retryText}`
-                : '返回异常';
+              const reason = formatErrorReason(error.message, routeInfo);
               showToast(`⚠️ ${routeLabel} ${reason}，正在自动尝试下一个模型...`, 'info');
             }
           }
         }
 
-        const prompt = generateAIPrompt(userInput, job);
+        const prompt = generateAIPrompt(userInput, job, customJobName, tone);
         setCompareMode(false);
         setMode('ai_prompt');
         setTitle('复制提示词到豆包生成');
@@ -593,12 +737,12 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         setDifficulty(false);
         setContent(prompt);
 
-        try {
-          await navigator.clipboard.writeText(prompt);
-          showToast('📋 在线模型连续失败，已暂停重试并复制豆包提示词，请去豆包生成后粘回表单。', 'error');
-        } catch (err) {
-          showToast('📋 在线模型连续失败，已暂停重试并生成豆包提示词，请手动复制右侧内容。', 'error');
-        }
+        await copyPromptAndOpenDoubao(
+          prompt,
+          '📋 在线模型连续失败，已复制 Prompt 并打开豆包新对话。',
+          '📋 在线模型连续失败，Prompt 已复制；豆包窗口被拦截，请手动打开。',
+          'error'
+        );
       } finally {
         if (lastError) {
           console.error('本轮在线 AI 自动切换后仍未成功:', lastError);
@@ -616,14 +760,14 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   const handleTweak = () => {
     // 微调处也直接读取当前首页选择的 job
     if (mode === 'idle') {
-      const result = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job);
+      const result = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job, customJobName);
       setContent(result.content);
     } else if (mode === 'study') {
-      const result = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, job);
+      const result = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, job, customJobName);
       setContent(result.content);
     } else {
       // 任务模式下，随机从模版库拼接一句日常优化，降低重复度
-      const extraResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job);
+      const extraResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job, customJobName);
       const extraLine = extraResult.content.split('\n')[0].replace(/^\d+\.\s*/, '');
       const currentLines = content.split('\n');
       if (currentLines.length > 0) {
@@ -688,6 +832,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       difficulty,
       content: content.trim(),
       job,  // 使用实时自适应选择的岗位
+      customJobName: customJobName.trim(),
       tone, // 使用实时自适应选择的语气
       isAutoGenerated: mode !== 'task'
     };
@@ -846,6 +991,8 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
               >
                 <option value="frontend">💻 前端开发工程师</option>
                 <option value="designer">🎨 UI/UX 视觉设计师</option>
+                <option value="tester">🧪 测试工程师</option>
+                <option value="custom">✍️ 自定义岗位</option>
               </select>
             </div>
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
@@ -870,6 +1017,32 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
               </select>
             </div>
           </div>
+
+          {job === 'custom' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>自定义岗位名称</label>
+              <input
+                type="text"
+                value={customJobName}
+                onChange={(e) => setCustomJobName(e.target.value)}
+                onBlur={handleCustomJobNameBlur}
+                placeholder="例如：产品经理、运营、后端开发工程师"
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  borderRadius: '8px',
+                  background: 'rgba(0,0,0,0.15)',
+                  border: '1px solid var(--glass-border)',
+                  color: '#ffffff',
+                  fontSize: '12px',
+                  outline: 'none'
+                }}
+              />
+              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                当前生成岗位：{getJobDisplayName(job, customJobName)}
+              </span>
+            </div>
+          )}
 
           {/* 2. 工作状态/模式选择 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -998,9 +1171,9 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                   }}
                 >
                   {aiSettings.aiEnabled ? (
-                    <>
-                      {aiSettings.aiModel === 'openrouter/free' ? '🟢 [备用路由]' : '🟢 🔥'} {formatSelectedModel(aiSettings.aiModel)}
-                    </>
+                    aiSettings.aiModel
+                      ? <>{aiSettings.aiModel === 'openrouter/free' ? '🟢 [备用路由]' : '🟢 🔥'} {formatSelectedModel(aiSettings.aiModel)}</>
+                      : '🟡 未选择模型'
                   ) : '🔴 未启用大模型 (降级本地引擎)'}
                 </span>
                 {aiSettings.aiEnabled && lastRouteInfo && formatRouteLabel(lastRouteInfo) && (
@@ -1045,7 +1218,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                     onClick={() => {
                       setCompareMode((prev) => !prev);
                       setCompareResults([]);
-                      setCompareModels((prev) => prev.length > 0 ? prev : buildDefaultCompareModels(aiSettings.aiModel));
+                      setCompareModels((prev) => prev.length > 0 ? prev : buildDefaultCompareModels(aiSettings.aiModel, modelList, aiSettings.aiApiUrl));
                     }}
                     style={{
                       padding: '3px 6px',
@@ -1060,51 +1233,23 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                   >
                     对比{compareMode ? ` ${compareModels.length}/3` : ''}
                   </button>
-                  <button
-                    onClick={() => compareMode ? toggleCompareModel('openrouter/free') : handleQuickChangeModel('openrouter/free')}
-                    style={{
-                      padding: '3px 6px',
-                      borderRadius: '4px',
-                      background: (compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      color: (compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? '#60A5FA' : 'var(--text-secondary)',
-                      border: '1px solid ' + ((compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
-                      fontSize: '10px',
-                      cursor: 'pointer'
-                    }}
-                    title="备用自动路由：模型分配不稳定，优先推荐 Qwen3 或 Llama"
-                  >
-                    备用路由
-                  </button>
-                  <button
-                    onClick={() => compareMode ? toggleCompareModel('qwen/qwen-3-coder:free') : handleQuickChangeModel('qwen/qwen-3-coder:free')}
-                    style={{
-                      padding: '3px 6px',
-                      borderRadius: '4px',
-                      background: (compareMode ? compareModels.includes('qwen/qwen-3-coder:free') : aiSettings.aiModel === 'qwen/qwen-3-coder:free') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      color: (compareMode ? compareModels.includes('qwen/qwen-3-coder:free') : aiSettings.aiModel === 'qwen/qwen-3-coder:free') ? '#60A5FA' : 'var(--text-secondary)',
-                      border: '1px solid ' + ((compareMode ? compareModels.includes('qwen/qwen-3-coder:free') : aiSettings.aiModel === 'qwen/qwen-3-coder:free') ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
-                      fontSize: '10px',
-                      cursor: 'pointer'
-                    }}
-                    title="Qwen3 Coder 480B 免费推荐"
-                  >
-                    💻 Qwen3
-                  </button>
-                  <button
-                    onClick={() => compareMode ? toggleCompareModel('meta-llama/llama-3.3-70b-instruct:free') : handleQuickChangeModel('meta-llama/llama-3.3-70b-instruct:free')}
-                    style={{
-                      padding: '3px 6px',
-                      borderRadius: '4px',
-                      background: (compareMode ? compareModels.includes('meta-llama/llama-3.3-70b-instruct:free') : aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      color: (compareMode ? compareModels.includes('meta-llama/llama-3.3-70b-instruct:free') : aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free') ? '#60A5FA' : 'var(--text-secondary)',
-                      border: '1px solid ' + ((compareMode ? compareModels.includes('meta-llama/llama-3.3-70b-instruct:free') : aiSettings.aiModel === 'meta-llama/llama-3.3-70b-instruct:free') ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
-                      fontSize: '10px',
-                      cursor: 'pointer'
-                    }}
-                    title="Llama 3.3 70B 免费备选"
-                  >
-                    🦙 Llama
-                  </button>
+                  {isOpenRouterApi && (
+                    <button
+                      onClick={() => compareMode ? toggleCompareModel('openrouter/free') : handleQuickChangeModel('openrouter/free')}
+                      style={{
+                        padding: '3px 6px',
+                        borderRadius: '4px',
+                        background: (compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
+                        color: (compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? '#60A5FA' : 'var(--text-secondary)',
+                        border: '1px solid ' + ((compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
+                        fontSize: '10px',
+                        cursor: 'pointer'
+                      }}
+                      title="备用自动路由：由 OpenRouter 自动分配当前可用免费模型"
+                    >
+                      备用路由
+                    </button>
+                  )}
                   {/* 新设“更多自选”悬浮按钮，支持主页面所有大模型搜索与切换 */}
                   <button
                     onClick={() => setIsDropdownOpen(!isDropdownOpen)}
@@ -1340,12 +1485,14 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           {mode === 'ai_prompt' && content.startsWith('你是一个') && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
               <button
-                onClick={() => {
-                  navigator.clipboard.writeText(content);
+                onClick={async () => {
                   setCopiedField('ai_prompt_btn');
-                  showToast('🤖 提示词复制成功！正在前往豆包...', 'success');
+                  await copyPromptAndOpenDoubao(
+                    content,
+                    '📋 Prompt 已复制，并已打开豆包新对话，请粘贴后发送。',
+                    '📋 Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
+                  );
                   setTimeout(() => setCopiedField(null), 1500);
-                  window.open('https://www.doubao.com', '_blank');
                 }}
                 className="clickable"
                 style={{
@@ -1502,6 +1649,10 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                     >
                       <div title={formatRouteTitle(result.routeInfo)} style={{ fontSize: '11px', color: isSuccess ? '#93C5FD' : '#FCA5A5', fontWeight: 700, wordBreak: 'break-all' }}>
                         {routeLabel}
+                      </div>
+                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.4, wordBreak: 'break-all' }}>
+                        请求: {result.routeInfo?.requestedModel || result.requestedModel}
+                        {result.routeInfo?.providerName ? ` · Provider: ${result.routeInfo.providerName}` : ''}
                       </div>
                       {isSuccess ? (
                         <>

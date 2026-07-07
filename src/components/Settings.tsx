@@ -1,6 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save, Trash2, Cpu, RefreshCw } from 'lucide-react';
-import { AppData, saveSettings, importAllData, resetAllData, BACKEND_URL } from '../utils/storage';
+import {
+  AppData,
+  saveSettings,
+  importAllData,
+  resetAllData,
+  BACKEND_URL,
+  DEFAULT_AI_API_URL,
+  DEFAULT_AI_MODEL,
+  ModelOption,
+  getCurrentUser,
+  getUserAISettings,
+  saveUserAISettings,
+  loadCachedModels,
+  saveCachedModels,
+  isOpenRouterApiUrl
+} from '../utils/storage';
 
 interface SettingsProps {
   appData: AppData;
@@ -34,19 +49,37 @@ const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) =>
   return false;
 };
 
+const getDefaultModelOptions = (aiApiUrl: string): ModelOption[] => (
+  isOpenRouterApiUrl(aiApiUrl)
+    ? [{ id: DEFAULT_AI_MODEL, name: 'OpenRouter: Free Auto-Route (免费自动路由)', isFree: true }]
+    : []
+);
+
+const LEGACY_INVALID_MODELS = new Set([
+  'qwen/qwen-3-coder:free'
+]);
+
+const normalizeModelId = (modelId: string, aiApiUrl: string) => {
+  const isOpenRouterApi = isOpenRouterApiUrl(aiApiUrl);
+  if (!isOpenRouterApi && modelId === DEFAULT_AI_MODEL) return '';
+  if (LEGACY_INVALID_MODELS.has(modelId)) return isOpenRouterApi ? DEFAULT_AI_MODEL : '';
+  return modelId;
+};
+
 export default function Settings({ appData, onSaveSuccess, showToast }: SettingsProps) {
   const [job, setJob] = useState<string>('frontend');
+  const [customJobName, setCustomJobName] = useState<string>('');
   const [tone, setTone] = useState<string>('professional');
   const [similarityThreshold, setSimilarityThreshold] = useState<number>(50);
   const [rollingDays, setRollingDays] = useState<number>(7);
   const [aiEnabled, setAiEnabled] = useState<boolean>(false);
   const [aiApiKey, setAiApiKey] = useState<string>('');
-  const [aiApiUrl, setAiApiUrl] = useState<string>('https://openrouter.ai/api/v1');
-  const [aiModel, setAiModel] = useState<string>('qwen/qwen-3-coder:free');
-  const [saveKeyToCloud, setSaveKeyToCloud] = useState<boolean>(false);
+  const [aiApiUrl, setAiApiUrl] = useState<string>(DEFAULT_AI_API_URL);
+  const [aiModel, setAiModel] = useState<string>(DEFAULT_AI_MODEL);
+  const [saveKeyToCloud, setSaveKeyToCloud] = useState<boolean>(true);
   
   // 大模型动态同步与可搜索下拉框所需状态
-  const [modelList, setModelList] = useState<{ id: string; name: string; isFree: boolean }[]>([]);
+  const [modelList, setModelList] = useState<ModelOption[]>([]);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
@@ -58,24 +91,14 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
 
   // 恢复大模型本地列表缓存
   useEffect(() => {
-    const cached = localStorage.getItem('winner_daily_cached_models');
-    if (cached) {
-      try {
-        setModelList(JSON.parse(cached));
-      } catch (e) {
-        console.error('加载缓存大模型列表失败:', e);
-      }
-    } else {
-      // 预设默认免费大模型
-      setModelList([
-        { id: 'qwen/qwen-3-coder:free', name: 'Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)', isFree: true },
-        { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct (免费)', isFree: true },
-        { id: 'google/gemma-2-9b-it:free', name: 'Google: Gemma 2 9B (免费)', isFree: true },
-        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen: Qwen 2.5 72B Instruct (免费)', isFree: true },
-        { id: 'openrouter/free', name: 'OpenRouter: Free Auto-Route (备用自动路由-可能不稳定)', isFree: true }
-      ]);
+    setModelList(loadCachedModels(aiApiUrl) || getDefaultModelOptions(aiApiUrl));
+  }, [aiApiUrl]);
+
+  useEffect(() => {
+    if (!isOpenRouterApiUrl(aiApiUrl) && (aiModel === DEFAULT_AI_MODEL || LEGACY_INVALID_MODELS.has(aiModel))) {
+      setAiModel('');
     }
-  }, []);
+  }, [aiApiUrl, aiModel]);
 
   // 一键同步云端大模型列表
   const handleSyncModels = async () => {
@@ -88,7 +111,10 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
     try {
       const response = await fetch(`${BACKEND_URL}/api/models`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-User-Name': getCurrentUser()
+        },
         body: JSON.stringify({ aiApiKey, aiApiUrl })
       });
       
@@ -100,7 +126,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       const resData = await response.json();
       if (resData.success && resData.models) {
         setModelList(resData.models);
-        localStorage.setItem('winner_daily_cached_models', JSON.stringify(resData.models));
+        saveCachedModels(resData.models, aiApiUrl);
         showToast(`🎉 成功同步 ${resData.models.length} 个可用模型！免费大模型已置顶推荐。`, 'success');
       }
     } catch (err: any) {
@@ -138,59 +164,35 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
 
   // 初始化设置值
   useEffect(() => {
-    const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
+    const currentLoggedUser = getCurrentUser();
+    const localAISettings = getUserAISettings(currentLoggedUser);
+    const cloudSavePref = appData.settings?.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
+
     if (appData.settings) {
       setJob(appData.settings.job || 'frontend');
+      setCustomJobName(appData.settings.customJobName || '');
       setTone(appData.settings.tone || 'professional');
       setSimilarityThreshold(appData.settings.similarityThreshold || 50);
       setRollingDays(appData.settings.rollingDays || 7);
       
-      // 1. 云端最高优先级：优先从后端数据库配置中同步还原大模型模式的启用状态及地址、模型参数
-      setAiEnabled(appData.settings.aiEnabled || false);
-      setAiApiUrl(appData.settings.aiApiUrl || 'https://openrouter.ai/api/v1');
-      setAiModel(appData.settings.aiModel || 'qwen/qwen-3-coder:free');
-
-      // 智能判定 saveKeyToCloud 的勾选状态
-      const cloudSavePref = appData.settings.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
       setSaveKeyToCloud(cloudSavePref);
 
-      // 如果开启了云端保存偏好，且云端存有 key，则拉起展示它
-      if (cloudSavePref && appData.settings.aiApiKey) {
-        setAiApiKey(appData.settings.aiApiKey);
-      }
-    }
-
-    // 2. 本地浏览器缓存做敏感密钥的退路兜底 (仅当未选择保存在云端时起效)
-    const rawAISettings = localStorage.getItem(`winner_daily_ai_settings_${currentLoggedUser}`);
-    if (rawAISettings) {
-      try {
-        const parsed = JSON.parse(rawAISettings);
-        
-        // 若用户之前决定不把 Key 存云端，则从当前浏览器 LocalStorage 中恢复
-        const cloudSavePref = appData.settings?.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
-        if (!cloudSavePref && parsed.aiApiKey) {
-          setAiApiKey(parsed.aiApiKey);
-        }
-        
-        // 若后端数据因其他原因缺失，以本地缓存兜底参数
-        if (appData.settings) {
-          if (appData.settings.aiEnabled === undefined) setAiEnabled(parsed.aiEnabled || false);
-          if (!appData.settings.aiApiUrl) setAiApiUrl(parsed.aiApiUrl || 'https://openrouter.ai/api/v1');
-          if (!appData.settings.aiModel) setAiModel(parsed.aiModel || 'qwen/qwen-3-coder:free');
-        }
-      } catch (e) {
-        console.error('初始化本地大模型配置失败:', e);
-      }
+      setAiEnabled(localAISettings.aiEnabled !== undefined ? !!localAISettings.aiEnabled : (appData.settings.aiEnabled || false));
+      setAiApiUrl(localAISettings.aiApiUrl || appData.settings.aiApiUrl || DEFAULT_AI_API_URL);
+      const resolvedModel = normalizeModelId(localAISettings.aiModel || appData.settings.aiModel || (isOpenRouterApiUrl(localAISettings.aiApiUrl || appData.settings.aiApiUrl || DEFAULT_AI_API_URL) ? DEFAULT_AI_MODEL : ''), localAISettings.aiApiUrl || appData.settings.aiApiUrl || DEFAULT_AI_API_URL);
+      setAiModel(resolvedModel);
+      setAiApiKey(cloudSavePref ? (appData.settings.aiApiKey || localAISettings.aiApiKey || '') : (localAISettings.aiApiKey || ''));
     }
   }, [appData.settings]);
 
   // 保存设置
   const handleSaveSettings = async () => {
-    const currentLoggedUser = localStorage.getItem('winner_daily_user') || 'admin';
+    const normalizedCustomJobName = customJobName.trim();
 
     // 1. 根据是否勾选云端保存，决定是否向后端数据库上传真实的 API Key (若不勾选则在云端强制物理擦除为空)
     const res = await saveSettings({
       job,
+      customJobName: normalizedCustomJobName,
       tone,
       similarityThreshold,
       rollingDays,
@@ -208,9 +210,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       aiApiUrl,
       aiModel
     };
-    localStorage.setItem(`winner_daily_ai_settings_${currentLoggedUser}`, JSON.stringify(localConfig));
-    // 兼容全局非隔离缓存，方便其他旧逻辑握手，但退出时统一擦除
-    localStorage.setItem('winner_daily_ai_settings', JSON.stringify(localConfig));
+    saveUserAISettings(localConfig);
 
     if (res.success) {
       setSaveStatus(true);
@@ -306,8 +306,8 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
               <select value={job} onChange={(e) => setJob(e.target.value)}>
                 <option value="frontend">💻 前端开发工程师</option>
                 <option value="designer">🎨 UI/UX 视觉设计师</option>
-                <option value="backend" disabled>⚙️ 后端开发工程师 (敬请期待)</option>
-                <option value="test" disabled>🧪 测试工程师 (敬请期待)</option>
+                <option value="tester">🧪 测试工程师</option>
+                <option value="custom">✍️ 自定义岗位</option>
               </select>
             </div>
 
@@ -321,6 +321,18 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
               </select>
             </div>
           </div>
+
+          {job === 'custom' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>自定义岗位名称</label>
+              <input
+                type="text"
+                value={customJobName}
+                onChange={(e) => setCustomJobName(e.target.value)}
+                placeholder="例如：产品经理、运营、后端开发工程师"
+              />
+            </div>
+          )}
 
           {/* 查重报警敏感度 */}
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
@@ -551,7 +563,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                           type="text"
                           value={searchQuery}
                           onChange={(e) => setSearchQuery(e.target.value)}
-                          placeholder="🔍 输入 free 或 qwen 等关键字检索模型..."
+                          placeholder="🔍 输入模型名称或 ID 检索..."
                           onClick={(e) => e.stopPropagation()} // 防止冒泡关闭下拉框
                           style={{
                             width: '100%',
@@ -688,7 +700,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                       type="text"
                       value={aiModel}
                       onChange={(e) => setAiModel(e.target.value)}
-                      placeholder="如: qwen/qwen-3-coder:free"
+                      placeholder={isOpenRouterApiUrl(aiApiUrl) ? '如: openrouter/free' : '填写当前上游支持的真实模型 ID'}
                     />
                   </div>
                 </div>

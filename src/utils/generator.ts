@@ -121,6 +121,80 @@ const JOB_TEMPLATES: Record<string, { actions: string[][]; study: string[][] }> 
         '整理出了一份网格间距规范，打算后续跟组里其他成员对一对看看'
       ]
     ]
+  },
+  tester: {
+    actions: [
+      [
+        '把今天提测的几个页面按用例重新走了一遍，重点看了表单校验和异常提示',
+        '整理了回归测试清单，把上个版本遗留的几个问题重新复测了一遍',
+        '对几个核心流程做了兼容性检查，顺手记录了不同浏览器下的小差异',
+        '跟开发对了下接口返回字段，把容易出问题的边界场景补进了测试点',
+        '把测试环境里的几条脏数据清理了一下，重新准备了几组常用账号',
+        '围绕登录、列表、详情几个高频入口跑了一轮冒烟测试',
+        '把今天发现的问题按严重程度整理了一下，补充了复现步骤和截图',
+        '针对昨天修复的缺陷做了回归验证，重点确认没有影响到老流程',
+        '把自动化脚本里几个不稳定的断言调整了一下，减少误报情况',
+        '检查了下线上相近功能的历史问题，补了几个容易遗漏的测试场景'
+      ],
+      [
+        '确认主要流程都能正常跑通，剩下的小问题已经同步给开发处理',
+        '复测结果已经更新到缺陷记录里，方便后面继续跟进状态',
+        '测试数据也顺手归档了一版，后续再跑同类场景会省不少时间',
+        '几个边界情况都重新验证过了，暂时没有发现新的阻塞问题',
+        '把容易误解的地方写进备注里，后面回归时可以直接对照',
+        '本地和测试环境都简单跑了一遍，整体结果比较稳定',
+        '相关截图和日志都整理好了，方便开发定位问题时直接查看',
+        '把复测通过的缺陷统一关掉了，测试看板也清爽了一些',
+        '脚本跑起来比之前稳定一点，后面夜间回归的误报会少些',
+        '最后又抽查了几个老功能入口，暂时没有明显回归风险'
+      ]
+    ],
+    study: [
+      [
+        '看了下接口测试用例设计的方法，重点了解了边界值和异常分支覆盖',
+        '学习了下自动化测试脚本的稳定性优化，研究了等待和断言写法',
+        '整理了移动端兼容测试的常见问题，顺便对照现有项目做了笔记',
+        '了解了下性能测试的基础指标，看了看响应时间和并发压测的概念',
+        '复盘了几个历史缺陷案例，分析了问题漏测的原因和补救办法'
+      ],
+      [
+        '顺手把学习笔记整理了一版，后续写用例时可以直接参考',
+        '在测试环境里试着跑了个小脚本，整体思路已经比较清楚',
+        '把常见检查点列成了清单，方便后面做版本回归时复用',
+        '结合当前项目场景简单评估了一下，后续可以逐步补充覆盖',
+        '把容易漏掉的验证点标了出来，后面评审用例时重点看这些地方'
+      ]
+    ]
+  },
+  generic: {
+    actions: [
+      [
+        '把手头几个日常事项按优先级重新排了一下，先处理了比较紧急的部分',
+        '整理了近期积累的资料和记录，把重复和过期的内容清理了一遍',
+        '跟相关同事对了下当前事项的处理进度，顺手补齐了几个遗漏信息',
+        '检查了几个已完成事项的后续状态，确认没有明显遗漏和阻塞',
+        '把今天需要交付的内容又核了一遍，重点看了细节和格式是否一致'
+      ],
+      [
+        '处理结果已经记录下来，后面继续推进时能直接接上',
+        '相关材料也整理好了，后续查找和交接会方便一些',
+        '几个需要跟进的问题已经标出来，明天可以继续确认',
+        '整体流程暂时比较顺畅，没有发现新的明显风险',
+        '最后又做了一轮自查，确认当前内容基本符合预期'
+      ]
+    ],
+    study: [
+      [
+        '看了下和当前岗位相关的工作方法资料，重点整理了常见流程和注意点',
+        '复盘了最近几个事项的处理过程，顺手记录了可以优化的地方',
+        '研究了下同类工作的优秀案例，对照自己的处理方式做了些笔记'
+      ],
+      [
+        '整理出来的要点已经保存下来，后续处理类似任务时可以参考',
+        '把几个可复用的检查项列成了清单，后面推进工作会更稳一点',
+        '结合当前工作节奏简单做了下取舍，后续会逐步尝试改进'
+      ]
+    ]
   }
 };
 
@@ -141,6 +215,17 @@ const JOB_TITLES: Record<string, { random: string[]; study: string[] }> = {
       '跨端分辨率适配视觉微调', '历史稿件规范命名与备份'
     ],
     study: ['AI设计工具预研', '微交互动画设计学习', 'Figma新特性与变量学习', '暗黑模式设计规范调研', 'CSS布局与还原规范学习', '前沿网格布局规则研究']
+  },
+  tester: {
+    random: [
+      '测试用例执行与缺陷复测', '核心流程冒烟测试验证', '版本回归测试整理',
+      '测试数据准备与环境检查', '缺陷记录整理与复现补充', '接口异常场景验证'
+    ],
+    study: ['测试用例设计学习', '自动化脚本稳定性学习', '兼容测试方法整理', '性能测试指标了解', '历史缺陷复盘分析']
+  },
+  generic: {
+    random: ['日常工作推进与整理', '重点事项核对与跟进', '工作资料整理与复盘', '协作事项沟通与确认'],
+    study: ['岗位方法学习整理', '工作流程复盘优化', '同类案例学习分析']
   }
 };
 
@@ -282,6 +367,49 @@ const DESIGNER_KEYWORD_MAPS: Record<string, KeywordRule> = {
   }
 };
 
+const TESTER_KEYWORD_MAPS: Record<string, KeywordRule> = {
+  '测试': {
+    title: '测试用例执行与验证',
+    cooperation: true,
+    difficulty: false,
+    descriptions: [
+      '按测试用例把主流程重新跑了一遍，重点核对了页面状态和异常提示。',
+      '把今天提测的功能逐项验证了一轮，顺手记录了几个需要开发确认的细节。',
+      '围绕高频入口做了冒烟测试，确认基础流程暂时没有明显阻塞问题。'
+    ]
+  },
+  '回归': {
+    title: '版本回归测试整理',
+    cooperation: false,
+    difficulty: false,
+    descriptions: [
+      '对本次改动影响到的老功能做了回归验证，把通过和待确认的项都标了出来。',
+      '重新复测了上个版本遗留的问题，确认修复结果并更新了缺陷状态。',
+      '按回归清单把核心路径跑了一遍，暂时没有发现新的明显回归风险。'
+    ]
+  },
+  'bug': {
+    title: '缺陷复现与跟进',
+    cooperation: true,
+    difficulty: true,
+    descriptions: [
+      '把测试中发现的 Bug 重新复现了一遍，补了截图、日志和具体操作步骤。',
+      '跟开发一起确认了缺陷触发条件，把复现路径整理得更清楚了一些。',
+      '对已修复的 Bug 做了复测，确认主流程恢复正常后更新了状态。'
+    ]
+  },
+  '接口': {
+    title: '接口异常场景验证',
+    cooperation: true,
+    difficulty: false,
+    descriptions: [
+      '对几个接口返回异常的场景做了验证，重点看页面兜底提示是否正常。',
+      '跟开发核对了接口字段和状态码，把边界情况补充进了测试点。',
+      '用不同测试数据跑了几组接口场景，确认页面展示和错误提示基本符合预期。'
+    ]
+  }
+};
+
 // 通用口语兜底
 const GENERAL_EXPANDS = [
   '照着排期继续写写业务代码，并在本地跑了跑自测。',
@@ -296,6 +424,32 @@ const DESIGNER_GENERAL_EXPANDS = [
   '跟产品、前端一块对了对交互逻辑，确保开发出来的还原度。',
   '完成了这期改动范围内的全部视觉稿输出，随时可以交付给开发。'
 ];
+
+const TESTER_GENERAL_EXPANDS = [
+  '按测试清单跑了一轮验证，并把结果同步到了记录里。',
+  '把相关缺陷和复测状态整理了一下，方便后续继续跟进。',
+  '跟开发确认了几个边界情况，保证回归时不会漏掉。',
+  '完成了当前范围内的基础验证，暂时没有发现明显阻塞问题。'
+];
+
+const GENERIC_GENERAL_EXPANDS = [
+  '把相关内容整理了一遍，并记录了后续需要跟进的事项。',
+  '和相关同事确认了处理进度，保证后续衔接不会断掉。',
+  '对当前结果做了一轮自查，整体暂时没有明显问题。',
+  '把资料和记录归档了一版，方便后面继续推进。'
+];
+
+function getTemplateKey(job: string): string {
+  if (job === 'designer' || job === 'tester' || job === 'frontend') return job;
+  return 'generic';
+}
+
+export function getJobDisplayName(job: string = 'frontend', customJobName: string = ''): string {
+  if (job === 'designer') return 'UI/UX 视觉设计师';
+  if (job === 'tester') return '测试工程师';
+  if (job === 'custom') return customJobName.trim() || '自定义岗位';
+  return '前端开发工程师';
+}
 
 export interface GeneratedLogResult {
   title: string;
@@ -318,10 +472,13 @@ function getRandomElement<T>(arr: T[]): T {
 export function generateRandomFrontendDaily(
   date: string,
   isStudyMode: boolean = false,
-  job: string = 'frontend'
+  job: string = 'frontend',
+  customJobName: string = ''
 ): GeneratedLogResult {
-  const template = JOB_TEMPLATES[job] || JOB_TEMPLATES.frontend;
-  const titles = JOB_TITLES[job] || JOB_TITLES.frontend;
+  const templateKey = getTemplateKey(job);
+  const template = JOB_TEMPLATES[templateKey] || JOB_TEMPLATES.frontend;
+  const titles = JOB_TITLES[templateKey] || JOB_TITLES.frontend;
+  const jobName = getJobDisplayName(job, customJobName);
 
   const lines: string[] = [];
   let title = '';
@@ -358,6 +515,11 @@ export function generateRandomFrontendDaily(
     }
   }
 
+  if (job === 'custom') {
+    title = `${jobName}日常工作整理`;
+    if (title.length > 30) title = `${jobName.substring(0, 12)}工作整理`;
+  }
+
   return {
     title,
     hours: 8,
@@ -370,15 +532,20 @@ export function generateRandomFrontendDaily(
 /**
  * 2. 核心生成逻辑：根据用户输入进行智能扩写
  */
-export function expandUserInput(userInput: string, job: string = 'frontend'): GeneratedLogResult {
+export function expandUserInput(userInput: string, job: string = 'frontend', customJobName: string = ''): GeneratedLogResult {
   const trimmed = userInput.trim();
   if (!trimmed) {
     const randomSeed = new Date().toISOString() + Math.random().toString();
-    return generateRandomFrontendDaily(randomSeed, false, job);
+    return generateRandomFrontendDaily(randomSeed, false, job, customJobName);
   }
 
-  const keywordMaps = job === 'designer' ? DESIGNER_KEYWORD_MAPS : FRONTEND_KEYWORD_MAPS;
-  const generalExpands = job === 'designer' ? DESIGNER_GENERAL_EXPANDS : GENERAL_EXPANDS;
+  const keywordMaps = job === 'designer'
+    ? DESIGNER_KEYWORD_MAPS
+    : (job === 'tester' ? TESTER_KEYWORD_MAPS : FRONTEND_KEYWORD_MAPS);
+  const generalExpands = job === 'designer'
+    ? DESIGNER_GENERAL_EXPANDS
+    : (job === 'tester' ? TESTER_GENERAL_EXPANDS : (job === 'custom' ? GENERIC_GENERAL_EXPANDS : GENERAL_EXPANDS));
+  const jobName = getJobDisplayName(job, customJobName);
 
   const tasks = trimmed.split(/[,，\s;；\n]+/).filter(Boolean);
   const lines: string[] = [];
@@ -402,7 +569,7 @@ export function expandUserInput(userInput: string, job: string = 'frontend'): Ge
     }
 
     if (matchedRule) {
-      const lineLeader = job === 'designer' ? '' : (matchedRule.descriptions.indexOf(matchedExpandedText) === 0 ? '主要' : '下午');
+      const lineLeader = job === 'designer' || job === 'tester' ? '' : (matchedRule.descriptions.indexOf(matchedExpandedText) === 0 ? '主要' : '下午');
       lines.push(`${index + 1}. ${lineLeader}${matchedPrefix}${matchedExpandedText}`);
       
       if (matchedRule.cooperation) finalCooperation = true;
@@ -419,9 +586,11 @@ export function expandUserInput(userInput: string, job: string = 'frontend'): Ge
 
   if (!finalTitle) {
     if (tasks.length > 0) {
-      finalTitle = `${tasks[0].substring(0, 15)}${job === 'designer' ? '日常设计细化' : '日常功能开发'}`;
+      finalTitle = job === 'custom'
+        ? `${jobName.substring(0, 12)}工作推进`
+        : `${tasks[0].substring(0, 15)}${job === 'designer' ? '日常设计细化' : (job === 'tester' ? '测试验证推进' : '日常功能开发')}`;
     } else {
-      finalTitle = job === 'designer' ? '日常视觉设计工作' : '前端业务代码编写';
+      finalTitle = job === 'designer' ? '日常视觉设计工作' : (job === 'tester' ? '日常测试验证工作' : '前端业务代码编写');
     }
   }
 
@@ -431,7 +600,7 @@ export function expandUserInput(userInput: string, job: string = 'frontend'): Ge
 
   // 单条扩写时的口语自测自检后缀
   if (lines.length === 1 && !userInput.includes('优化') && !userInput.includes('重构') && !userInput.includes('走查')) {
-    const maintenanceLines = JOB_TEMPLATES[job]?.actions[0] || JOB_TEMPLATES.frontend.actions[0];
+    const maintenanceLines = JOB_TEMPLATES[getTemplateKey(job)]?.actions[0] || JOB_TEMPLATES.frontend.actions[0];
     const p1 = getRandomElement(maintenanceLines);
     lines.push(`2. 顺手${p1.charAt(0).toLowerCase() + p1.slice(1)}，自测觉得没什么大问题。`);
   }
@@ -506,30 +675,46 @@ export function getSimilarityLevel(similarity: number, threshold: number = 50): 
 /**
  * 5. 核心大模型 Prompt 生成器 (豆包专版)
  */
-export function generateAIPrompt(userInput: string, job: string): string {
-  const jobName = job === 'designer' ? 'UI/UX 视觉设计师' : '前端开发工程师';
+export function generateAIPrompt(userInput: string, job: string, customJobName: string = '', tone: string = 'professional'): string {
+  const jobName = getJobDisplayName(job, customJobName);
+  const defaultTaskText = job === 'designer'
+    ? '“日常设计维护：整理历史页面高保真视觉稿，清理冗余图层和过期切图，核对组件间距、字号和颜色标注，并补充常用素材归档”'
+    : (job === 'tester'
+      ? '“日常测试维护：整理回归测试清单，清理测试环境脏数据，复查历史缺陷状态，并抽查几个核心流程的稳定性”'
+      : (job === 'custom'
+        ? `“${jobName}日常维护：整理近期资料和记录，检查已完成事项的后续状态，补齐遗漏信息并归档常用材料”`
+        : '“日常基础代码库维护与细节调优：检查历史页面样式兼容和交互细节，清理控制台警告、无用日志和本地配置项，顺手梳理公共组件入参，并跑一遍常用页面回归自测”'));
   const tasksText = userInput.trim()
     ? `【${userInput.trim()}】`
-    : '“日常基础代码库维护与细节调优：检查历史页面样式兼容和交互细节，清理控制台警告、无用日志和本地配置项，顺手梳理公共组件入参，并跑一遍常用页面回归自测”';
+    : defaultTaskText;
 
   const examples = job === 'designer' ? `
 * 不推荐（太虚太浮夸）：
 “针对产品核心展示模块进行了全方位的交互体验设计与视觉包装升级，构建了高复用的视觉规范，显著提升了页面在跨终端环境下的用户体感和开发对接效率。”
 * 推荐（写实自然）：
 “上午把几个历史页面的视觉稿翻出来重新核了下间距和字号，顺手把图层命名和组件分组理顺了。下午对照产品线框补了两个状态页的小细节，又把切图和标注整理了一版，方便后面开发同事对照。”
+` : (job === 'tester' ? `
+* 不推荐（太虚太浮夸）：
+“围绕本版本核心质量保障体系开展了全链路验证，显著提升了系统稳定性与交付可信度，为业务上线提供了坚实保障。”
+* 推荐（写实自然）：
+“上午按测试用例把登录和列表流程重新跑了一遍，把两个异常提示不一致的问题记录了下来。下午复测了昨天修的几个 Bug，补了截图和复现步骤，方便开发继续跟。”
 ` : `
 * 不推荐（太虚太浮夸）：
 “深度重构了系统核心列表渲染组件，引入了基于虚拟滚动的高效异步加载算法，成功缩减了打包体积，显著优化了页面在低端机型下的首屏交互流畅度。”
 * 推荐（写实自然）：
 “上午把几个历史页面在不同宽度下的展示看了一遍，顺手调了下按钮间距和空状态文案。下午清理了控制台里几个重复警告，把公共组件的入参又核了一遍，最后在本地跑了下常用流程回归。”
-`;
+`);
+
+  const toneHint = tone === 'daily'
+    ? '语气可以更像自然流水账，但仍要具体、可信，不要过度口语到像聊天。'
+    : '语气保持专业严谨，但不要官腔、不要夸大成果。';
 
   return `你是一个专业 ${jobName}，擅长把当天真实工作记录整理成平实、具体、有执行细节的公司内部日报。请根据下面的工作记录，帮我写一份日常工作日志。
 
 今日工作记录：${tasksText}
 
 要求：
-1. 语气口语化、平实写实，像当天工作复盘；不要写夸张成果，不要编造数据、奖项或上线影响。
+1. ${toneHint}
 2. 必须写成 3 条内容，每条 45 到 70 个中文字左右，总体约 170 到 230 字。
 3. 每条都要包含“做了什么 + 怎么处理 + 检查/整理结果”，不要只写“调整配置”“自测完成”这种短句。
 4. 可以在给定工作范围内补充合理执行步骤，比如核对页面、调整样式、清理日志、整理组件、联调接口、本地回归等。
