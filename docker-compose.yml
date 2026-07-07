@@ -5,7 +5,7 @@ services:
     build: .
     container_name: winner-daily
     ports:
-      - "7899:3001"
+      - "127.0.0.1:3001:3001"
     volumes:
       # 持久化映射：将本地的数据库 db.json 挂载进容器，防止容器重启丢失工作日志
       - ./db.json:/app/db.json

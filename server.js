@@ -13,6 +13,8 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = 3001;
 const DB_FILE = path.join(__dirname, 'db.json');
+const DEFAULT_AI_API_URL = 'https://openrouter.ai/api/v1';
+const DEFAULT_AI_MODEL = 'qwen/qwen-3-coder:free';
 
 app.use(cors());
 app.use(express.json());
@@ -25,6 +27,55 @@ import crypto from 'crypto';
 // 密码加密哈希处理
 function hashPassword(password) {
   return crypto.createHash('sha256').update(password).digest('hex');
+}
+
+function createDefaultSettings(overrides = {}) {
+  return {
+    job: 'frontend',
+    tone: 'professional',
+    similarityThreshold: 50,
+    rollingDays: 7,
+    aiApiKey: '',
+    aiApiUrl: DEFAULT_AI_API_URL,
+    aiModel: DEFAULT_AI_MODEL,
+    aiEnabled: false,
+    saveKeyToCloud: true,
+    ...overrides
+  };
+}
+
+function buildTaskSeed(userInput, job, mode) {
+  const currentMode = mode === 'idle' || mode === 'study' ? mode : 'task';
+  const explicitInput = typeof userInput === 'string' ? userInput.trim() : '';
+
+  if (currentMode === 'task' && explicitInput) {
+    return `【${explicitInput}】`;
+  }
+
+  const presets = job === 'designer'
+    ? {
+        task: '“设计开发：细化核心页面高保真视觉稿、核对产品线框流程、整理切图交付并走查开发还原效果”',
+        idle: '“日常维护：整理历史项目高保真视觉源文件、清理本地 Figma 冗余图层、校对视觉组件规范库”',
+        study: '“设计预研：调研移动端 UI/UX 交互趋势、收集优秀商业设计案例、整理个人视觉提案思路”'
+      }
+    : {
+        task: '“业务开发：编写日常模块页面与交互逻辑、配合后端完成数据联调、本地浏览器回归走查”',
+        idle: '“日常维护：例行整理代码库细节、排查前端界面样式兼容问题、清理警告日志并本地自测”',
+        study: '“技术预研：阅读前端工程化规范指南、在本地环境搭建测试 Demo、整理框架新特性笔记”'
+      };
+
+  return presets[currentMode];
+}
+
+function isSafetyPlaceholder(rawText) {
+  const normalized = rawText.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!normalized) return false;
+
+  return (
+    /^(user|assistant)?\s*safety\s*:\s*(safe|unsafe|blocked)\.?$/.test(normalized) ||
+    /^(moderation|content\s*safety)\s*:\s*(safe|unsafe|blocked)\.?$/.test(normalized) ||
+    /^(safe|unsafe|blocked)\.?$/.test(normalized)
+  );
 }
 
 // 初始化 db.json (支持多租户升级与历史单用户数据无损自动迁移)
@@ -110,17 +161,7 @@ app.post('/api/register', (req, res) => {
   db.users[normalizedUser] = {
     password: hashPassword(password),
     logs: {},
-    settings: {
-      job: 'frontend',
-      tone: 'professional',
-      similarityThreshold: 50,
-      rollingDays: 7,
-      aiApiKey: '',
-      aiApiUrl: 'https://openrouter.ai/api/v1',
-      aiModel: 'openrouter/free',
-      aiEnabled: false, // 默认不勾选开启大模型模式
-      saveKeyToCloud: true // 默认第一次注册允许云端保存Key
-    }
+    settings: createDefaultSettings()
   };
 
   if (writeDB(db)) {
@@ -162,16 +203,7 @@ app.get('/api/data', (req, res) => {
     db.users[username] = {
       password: hashPassword('admin123'),
       logs: {},
-      settings: {
-        job: 'frontend',
-        tone: 'professional',
-        similarityThreshold: 50,
-        rollingDays: 7,
-        aiApiKey: '',
-        aiApiUrl: 'https://openrouter.ai/api/v1',
-        aiModel: 'openrouter/free',
-        aiEnabled: true
-      }
+      settings: createDefaultSettings({ aiEnabled: true })
     };
     writeDB(db);
   }
@@ -267,17 +299,7 @@ app.post('/api/reset', (req, res) => {
 
   if (db.users[username]) {
     db.users[username].logs = {};
-    db.users[username].settings = {
-      job: 'frontend',
-      tone: 'professional',
-      similarityThreshold: 50,
-      rollingDays: 7,
-      aiApiKey: '',
-      aiApiUrl: 'https://openrouter.ai/api/v1',
-      aiModel: 'openrouter/free',
-      aiEnabled: false,
-      saveKeyToCloud: true
-    };
+    db.users[username].settings = createDefaultSettings();
     if (writeDB(db)) {
       return res.json({ success: true });
     }
@@ -294,64 +316,39 @@ app.post('/api/generate', async (req, res) => {
   const user = db.users[username] || { settings: {} };
 
   const finalApiKey = aiApiKey || user.settings.aiApiKey;
-  const finalApiUrl = aiApiUrl || user.settings.aiApiUrl || 'https://openrouter.ai/api/v1';
-  const finalApiModel = aiModel || user.settings.aiModel || 'qwen/qwen-3-coder:free';
+  const finalApiUrl = aiApiUrl || user.settings.aiApiUrl || DEFAULT_AI_API_URL;
+  const finalApiModel = aiModel || user.settings.aiModel || DEFAULT_AI_MODEL;
 
   if (!finalApiKey) {
     return res.status(400).json({ error: '在线大模型接口未配置 API 密钥 (API Key)！请先前往设置或首页申请配置。' });
   }
 
   const jobName = job === 'designer' ? 'UI/UX 视觉设计师' : '前端开发工程师';
-  
-  let tasksText = '';
-  if (userInput && userInput.trim()) {
-    tasksText = `【${userInput.trim()}】`;
-  } else {
-    if (job === 'designer') {
-      // 设计师岗位的空任务自适应预设
-      if (mode === 'idle') {
-        tasksText = '“日常维护：整理历史项目高保真视觉设计源文件、清理本地 Figma 冗余图层、校对整理视觉组件规范规范库”';
-      } else if (mode === 'study') {
-        tasksText = '“设计预研：调研行业内最新的移动端 UI/UX 交互趋势、收集主流商业优秀设计概念、输出个人视觉提案”';
-      } else {
-        // mode === 'task' 且不输入
-        tasksText = '“设计开发：日常核心页面高保真视觉效果图绘制、配合产品分析线框图流程、输出交付切图并对开发还原度走查”';
-      }
-    } else {
-      // 前端开发岗位的空任务自适应预设
-      if (mode === 'idle') {
-        tasksText = '“日常维护：例行代码库细节微调、排查潜在的前端界面样式兼容缺陷、整理规范并自测”';
-      } else if (mode === 'study') {
-        tasksText = '“技术预研：研读最新的前端工程化规范指南、在本地环境搭建测试 Demo、沉淀框架新特性”';
-      } else {
-        // 默认/正常任务 (mode === 'task' 且不输入)
-        tasksText = '“业务开发：日常模块页面与交互逻辑编写、与后端完成初步数据联调、本地运行浏览器回归走查”';
-      }
-    }
-  }
+  const tasksText = buildTaskSeed(userInput, job, mode);
 
   const examples = job === 'designer' ? `
-* ❌ 反面例子（太虚太浮夸，HR一眼看穿是AI）：
+* 不推荐（太虚太浮夸）：
 “针对产品核心展示模块进行了全方位的交互体验设计与视觉包装升级，构建了高复用的视觉规范，显著提升了页面在跨终端环境下的用户体感和开发对接效率。”
-* 🟢 正面例子（非常写实自然，工作量饱和）：
+* 推荐（写实自然）：
 “跟产品对了对下期需求的线框图，理了理几个复杂的页面跳转逻辑。下午把这期核心的高保真视觉设计稿细化了下，顺便把本地图层重新命名归档整理了下，给云盘腾了腾空间。”
 ` : `
-* ❌ 反面例子（太虚太浮夸，HR一眼看穿是AI）：
+* 不推荐（太虚太浮夸）：
 “深度重构了系统核心列表渲染组件，引入了基于虚拟滚动的高效异步加载算法，成功缩减了打包体积，显著优化了页面在低端机型下的首屏交互流畅度。”
-* 🟢 正面例子（非常写实自然，工作量饱和）：
+* 推荐（写实自然）：
 “把首页列表数据多的时候有点卡顿的问题给优化了下，改成了按需懒加载渲染。顺手把项目打包的配置文件精简了下，清理了几个过期不用的包，在本地跑了下回归测试。”
 `;
 
-  const systemPrompt = `你是一个在公司里默默搬砖、踏实干活的专业 ${jobName}。请帮我写一份日常工作日志。`;
-  const userPrompt = `今天我做的工作是：${tasksText}。请帮我写一份日常工作日志。
+  const systemPrompt = `你是一个专业 ${jobName}，擅长把当天真实工作记录整理成平实、简洁的公司内部日报。`;
+  const userPrompt = `请把下面这段今日工作记录整理成一份日常工作日志。
+
+今日工作记录：${tasksText}
 
 要求：
-1. 语气必须高度口语化、平实写实，像真人随手写的流水账。绝对不要有任何浮夸的 AI 腔调和官腔（多用“改了改”、“调了调”、“排查了”、“修了一下”、“对了一下”，绝对不要用“重构了冗余逻辑”、“显著提升了性能”、“优化了打包体积”等浮夸词汇）。
-2. 工作量显得“饱满且充实”。如果我给出的工作内容比较简短，请帮我在合理的专业范围内进行步骤展开（比如把“写了登录”合理扩展拆解为：画页面布局、处理表单参数校验、联调接口以及本地跑自测等）。
-3. 增加一点点口语化的工作细节（比如设计师的“把 Figma 的间距标注仔细对了一遍”、“整理图层并重新命名归档”，或者开发人员的“把控制台里的几个警告日志清理了一下”等），让日报显得极其真实。
-4. 字数控制在 100 - 150 字之间，分条列出（2-3条即可）。
-5. ⚠️【硬性字数限制】：生成的每一条工作内容，长度必须至少在 20 到 35 个字之间！绝对不能敷衍地用一句十来个字草草了事，也不能在句尾突然截断，每一句话都必须有完整的动作、步骤和自测/交付细节！
-6. 顺便帮我起一个 15 字以内的极简日志标题。
+1. 语气口语化、平实写实，像当天工作复盘；不要写夸张成果，不要编造数据、奖项或上线影响。
+2. 可以在给定工作范围内补充合理执行步骤，比如核对、调整、联调、自测、整理记录等。
+3. 总字数控制在 100 - 150 字之间，分 2-3 条列出。
+4. 每一条工作内容保持 20 到 35 个字左右，句子要完整，有动作、步骤或自测细节。
+5. 顺便帮我起一个 15 字以内的极简日志标题。
 
 请参考并对比以下写作风格：
 ${examples}
@@ -373,7 +370,7 @@ ${examples}
         'Authorization': `Bearer ${finalApiKey}`
       },
       body: JSON.stringify({
-        model: finalApiModel || 'qwen/qwen-3-coder:free',
+        model: finalApiModel || DEFAULT_AI_MODEL,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
@@ -401,15 +398,13 @@ ${examples}
 
     const rawText = contentVal.trim();
     
-    // 🔴 智能拦截上游安全过滤器返回的无效占位文本 (如 User Safety: safe 或者是短段过滤错误)
-    const textLower = rawText.toLowerCase();
-    if (
-      textLower.includes('user safety') || 
-      textLower.includes('safety: safe') || 
-      textLower.includes('moderation') ||
-      rawText.length < 15
-    ) {
+    // 拦截上游安全过滤器返回的无效占位文本，例如 "User Safety: safe"。
+    if (isSafetyPlaceholder(rawText)) {
       throw new Error('上游安全内容拦截: 大模型返回了安全审核占位词，请在左下角切换为其他大模型（如 Qwen3 或 Llama）重新尝试！');
+    }
+
+    if (rawText.length < 15) {
+      throw new Error('API 平台返回内容过短，未形成可用日报，请稍后重试或切换其他模型。');
     }
 
     // 解析

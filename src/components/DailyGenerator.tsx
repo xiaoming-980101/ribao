@@ -19,9 +19,6 @@ interface DailyGeneratorProps {
 // 智能识别核心免费推荐大模型 (对中文大白话生成效果最佳且免费的型号)
 const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) => {
   const idLower = m.id.toLowerCase();
-  if (idLower === 'openrouter/free' || idLower.includes('openrouter/free')) {
-    return true;
-  }
   if (m.isFree) {
     if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('coder')) return true;
     if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('next')) return true;
@@ -168,11 +165,11 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     } else {
       // 预设默认大模型列表
       setModelList([
-        { id: 'openrouter/free', name: 'OpenRouter: Free Auto-Route (避堵推荐-免排队自动免费路由)', isFree: true },
         { id: 'qwen/qwen-3-coder:free', name: 'Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)', isFree: true },
         { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct (免费)', isFree: true },
         { id: 'google/gemma-2-9b-it:free', name: 'Google: Gemma 2 9B (免费)', isFree: true },
-        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen: Qwen 2.5 72B Instruct (免费)', isFree: true }
+        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen: Qwen 2.5 72B Instruct (免费)', isFree: true },
+        { id: 'openrouter/free', name: 'OpenRouter: Free Auto-Route (备用自动路由-可能不稳定)', isFree: true }
       ]);
     }
 
@@ -374,7 +371,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         
         // 针对上游 API 发生 429 或者是被限流的状况进行明确避堵 Toast 引导
         if (errMsg.includes('429') || errMsg.includes('too many requests') || errMsg.includes('limit')) {
-          showToast('⚠️ 上游大模型服务开小差了 (已被平台限流 429 啦)！已为您降级为本地生成。建议您在左下角一键切换为 [避堵路由] 模型，即可秒速绕开拥堵！', 'error');
+          showToast('⚠️ 上游大模型服务开小差了 (已被平台限流 429 啦)！已为您降级为本地生成。建议您切换 Qwen3 或 Llama 后再试。', 'error');
         } else {
           showToast(`❌ AI 生成失败: ${error.message || error}，已为您自动降级至本地生成。`, 'error');
         }
@@ -776,7 +773,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                 >
                   {aiSettings.aiEnabled ? (
                     <>
-                      {aiSettings.aiModel === 'openrouter/free' ? '🟢 🔥 [避堵路由]' : '🟢 🔥'} {aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}
+                      {aiSettings.aiModel === 'openrouter/free' ? '🟢 [备用路由]' : '🟢 🔥'} {aiSettings.aiModel.split('/').pop() || aiSettings.aiModel}
                     </>
                   ) : '🔴 未启用大模型 (降级本地引擎)'}
                 </span>
@@ -810,9 +807,9 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                       fontSize: '10px',
                       cursor: 'pointer'
                     }}
-                    title="避堵推荐：免排队自动免费分流"
+                    title="备用自动路由：模型分配不稳定，优先推荐 Qwen3 或 Llama"
                   >
-                    🚀 避堵路由
+                    备用路由
                   </button>
                   <button
                     onClick={() => handleQuickChangeModel('qwen/qwen-3-coder:free')}
@@ -957,7 +954,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
                             }}
                           >
                             <span style={{ fontWeight: isSelected ? '700' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '170px' }}>
-                              {isRec ? (isAuto ? '🔥 [避堵] ' : '🔥 ') : ''}{m.name}
+                              {isAuto ? '[备用] ' : (isRec ? '🔥 ' : '')}{m.name}
                             </span>
                             <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
                               {isAuto && (

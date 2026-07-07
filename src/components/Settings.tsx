@@ -12,11 +12,6 @@ interface SettingsProps {
 const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) => {
   const idLower = m.id.toLowerCase();
   
-  // 针对 openrouter/free 自动路由模型的特殊匹配
-  if (idLower === 'openrouter/free' || idLower.includes('openrouter/free')) {
-    return true;
-  }
-  
   // 必须是免费模型，且符合我们推荐的关键型号
   if (m.isFree) {
     // 1. Qwen 3 Coder 系列 (包含 qwen, 3, coder)
@@ -73,11 +68,11 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
     } else {
       // 预设默认免费大模型
       setModelList([
-        { id: 'openrouter/free', name: 'OpenRouter: Free Auto-Route (避堵推荐-免排队自动免费路由)', isFree: true },
         { id: 'qwen/qwen-3-coder:free', name: 'Qwen: Qwen3 Coder 480B (推荐-中文口语最强-免费)', isFree: true },
         { id: 'meta-llama/llama-3.3-70b-instruct:free', name: 'Meta: Llama 3.3 70B Instruct (免费)', isFree: true },
         { id: 'google/gemma-2-9b-it:free', name: 'Google: Gemma 2 9B (免费)', isFree: true },
-        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen: Qwen 2.5 72B Instruct (免费)', isFree: true }
+        { id: 'qwen/qwen-2.5-72b-instruct:free', name: 'Qwen: Qwen 2.5 72B Instruct (免费)', isFree: true },
+        { id: 'openrouter/free', name: 'OpenRouter: Free Auto-Route (备用自动路由-可能不稳定)', isFree: true }
       ]);
     }
   }, []);
@@ -625,7 +620,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                                     }}
                                   >
                                     <span style={{ fontWeight: aiModel === m.id ? '700' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>
-                                      {isRec ? (m.id.toLowerCase().includes('openrouter/free') ? '🔥 [避堵路由] ' : '🔥 ') : ''}{m.name}
+                                      {m.id.toLowerCase().includes('openrouter/free') ? '[备用] ' : (isRec ? '🔥 ' : '')}{m.name}
                                     </span>
                                     <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
                                       {m.id.toLowerCase().includes('openrouter/free') && (
@@ -640,7 +635,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                                             border: '1px solid rgba(59, 130, 246, 0.2)'
                                           }}
                                         >
-                                          避堵首选
+                                          备用路由
                                         </span>
                                       )}
                                       {isRec && (

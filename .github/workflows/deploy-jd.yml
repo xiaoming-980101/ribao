@@ -1,0 +1,192 @@
+name: Deploy JD Cloud
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-jd-main
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      APP_NAME: winner-daily
+      BUILD_DIR: dist
+      JD_HOST: ${{ secrets.JD_HOST }}
+      JD_PORT: ${{ secrets.JD_PORT || '22' }}
+      JD_USER: ${{ secrets.JD_USER || 'root' }}
+      JD_DEPLOY_PATH: ${{ secrets.JD_DEPLOY_PATH || '/opt/winner-daily' }}
+      JD_PUBLIC_PORT: ${{ secrets.JD_PUBLIC_PORT || '7899' }}
+      JD_APP_PORT: ${{ secrets.JD_APP_PORT || '3001' }}
+      JD_PUBLIC_URL: ${{ secrets.JD_PUBLIC_URL }}
+      JD_HOST_FINGERPRINT: ${{ secrets.JD_HOST_FINGERPRINT }}
+      SSHPASS: ${{ secrets.JD_SSH_PASSWORD }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          for name in JD_HOST JD_PORT JD_USER JD_DEPLOY_PATH JD_PUBLIC_PORT JD_APP_PORT SSHPASS; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::$name is required"
+              exit 1
+            fi
+          done
+
+          test -d "$BUILD_DIR"
+          test -f "$BUILD_DIR/index.html"
+          test -f server.js
+          test -f Dockerfile
+
+          sudo apt-get update
+          sudo apt-get install -y sshpass
+
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$JD_PORT" "$JD_HOST" > ~/.ssh/known_hosts.new
+          if [ -n "${JD_HOST_FINGERPRINT:-}" ]; then
+            if ! ssh-keygen -lf ~/.ssh/known_hosts.new -E sha256 | awk '{print $2}' | grep -Fx "$JD_HOST_FINGERPRINT"; then
+              echo "::error::Host key fingerprint mismatch"
+              ssh-keygen -lf ~/.ssh/known_hosts.new -E sha256 || true
+              exit 1
+            fi
+          fi
+          mv ~/.ssh/known_hosts.new ~/.ssh/known_hosts
+
+          archive="${APP_NAME}-${GITHUB_SHA}.tgz"
+          tar -czf "$archive" \
+            "$BUILD_DIR" \
+            server.js \
+            package.json \
+            package-lock.json \
+            Dockerfile \
+            docker-compose.yml
+
+          sshpass -e scp -P "$JD_PORT" -o StrictHostKeyChecking=yes "$archive" "$JD_USER@$JD_HOST:/tmp/$archive"
+
+          sshpass -e ssh -p "$JD_PORT" -o StrictHostKeyChecking=yes "$JD_USER@$JD_HOST" \
+            "APP_NAME='$APP_NAME' DEPLOY_SHA='$GITHUB_SHA' DEPLOY_TARGET='$JD_DEPLOY_PATH' DEPLOY_ARCHIVE='/tmp/$archive' PUBLIC_PORT='$JD_PUBLIC_PORT' APP_PORT='$JD_APP_PORT' bash -s" <<'REMOTE'
+          set -euo pipefail
+
+          app_name="$APP_NAME"
+          target="$DEPLOY_TARGET"
+          archive="$DEPLOY_ARCHIVE"
+          public_port="$PUBLIC_PORT"
+          app_port="$APP_PORT"
+          release="/tmp/${app_name}-release-$DEPLOY_SHA"
+          backup="/var/backups/${app_name}-$(date +%Y%m%d%H%M%S)"
+
+          case "$target" in
+            /opt/*|/var/www/*) ;;
+            *)
+              echo "Refuse to deploy outside /opt or /var/www: $target"
+              exit 1
+              ;;
+          esac
+
+          install_packages() {
+            if command -v apt-get >/dev/null 2>&1; then
+              apt-get update
+              apt-get install -y nginx docker.io
+            elif command -v yum >/dev/null 2>&1; then
+              yum install -y nginx docker
+            else
+              echo "Unsupported Linux distribution: apt-get/yum not found"
+              exit 1
+            fi
+          }
+
+          if ! command -v nginx >/dev/null 2>&1 || ! command -v docker >/dev/null 2>&1; then
+            install_packages
+          fi
+
+          systemctl enable nginx >/dev/null 2>&1 || true
+          systemctl start nginx >/dev/null 2>&1 || true
+          systemctl enable docker >/dev/null 2>&1 || true
+          systemctl start docker >/dev/null 2>&1 || true
+
+          test -f "$archive"
+          rm -rf "$release"
+          mkdir -p "$release" "$target" /var/backups
+          tar -xzf "$archive" -C "$release"
+          test -f "$release/dist/index.html"
+          test -f "$release/server.js"
+
+          if [ ! -f "$target/db.json" ]; then
+            printf '{\n  "users": {}\n}\n' > "$target/db.json"
+          fi
+
+          cp -a "$target" "$backup"
+          find "$target" -mindepth 1 -maxdepth 1 ! -name db.json -exec rm -rf -- {} +
+          cp -a "$release"/. "$target"/
+
+          cd "$target"
+          docker build -t "${app_name}:${DEPLOY_SHA}" .
+          docker rm -f "$app_name" >/dev/null 2>&1 || true
+          docker run -d \
+            --name "$app_name" \
+            --restart always \
+            -p "127.0.0.1:${app_port}:3001" \
+            -v "$target/db.json:/app/db.json" \
+            "${app_name}:${DEPLOY_SHA}"
+
+          cat > "/etc/nginx/conf.d/${app_name}.conf" <<NGINX
+          server {
+              listen ${public_port};
+              listen [::]:${public_port};
+              server_name _;
+
+              client_max_body_size 10m;
+
+              location / {
+                  proxy_pass http://127.0.0.1:${app_port};
+                  proxy_http_version 1.1;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+                  proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+                  proxy_set_header X-Forwarded-Proto \$scheme;
+              }
+
+              access_log /var/log/nginx/${app_name}.access.log;
+              error_log  /var/log/nginx/${app_name}.error.log;
+          }
+          NGINX
+
+          nginx -t
+          nginx -s reload || systemctl reload nginx
+
+          rm -rf "$release" "$archive"
+          echo "Deployed $DEPLOY_SHA to $target"
+          echo "Backup: $backup"
+          REMOTE
+
+      - name: Smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          public_url="${JD_PUBLIC_URL:-http://${JD_HOST}:${JD_PUBLIC_PORT}}"
+          curl -fsS -o /tmp/site-index.html "$public_url/index.html?sha=${GITHUB_SHA}"
+          grep -q '<html' /tmp/site-index.html
