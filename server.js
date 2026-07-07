@@ -55,13 +55,13 @@ function buildTaskSeed(userInput, job, mode) {
   const presets = job === 'designer'
     ? {
         task: '“设计开发：细化核心页面高保真视觉稿、核对产品线框流程、整理切图交付并走查开发还原效果”',
-        idle: '“日常维护：整理历史项目高保真视觉源文件、清理本地 Figma 冗余图层、校对视觉组件规范库”',
-        study: '“设计预研：调研移动端 UI/UX 交互趋势、收集优秀商业设计案例、整理个人视觉提案思路”'
+        idle: '“日常维护：整理历史项目高保真视觉源文件，清理本地 Figma 冗余图层和过期切图，核对组件间距、字号和颜色标注，并把常用素材重新归档”',
+        study: '“设计预研：调研移动端 UI/UX 交互趋势，收集优秀商业设计案例，拆解几个常见页面的信息层级和动效细节，整理个人视觉提案思路”'
       }
     : {
         task: '“业务开发：编写日常模块页面与交互逻辑、配合后端完成数据联调、本地浏览器回归走查”',
-        idle: '“日常维护：例行整理代码库细节、排查前端界面样式兼容问题、清理警告日志并本地自测”',
-        study: '“技术预研：阅读前端工程化规范指南、在本地环境搭建测试 Demo、整理框架新特性笔记”'
+        idle: '“日常维护：检查历史页面在不同宽度下的样式兼容和交互细节，清理控制台警告、无用日志和本地配置项，顺手梳理公共组件入参，并跑一遍常用页面回归自测”',
+        study: '“技术预研：阅读前端工程化规范指南，在本地环境搭建测试 Demo，验证构建配置和组件写法差异，整理框架新特性笔记”'
       };
 
   return presets[currentMode];
@@ -76,6 +76,40 @@ function isSafetyPlaceholder(rawText) {
     /^(moderation|content\s*safety)\s*:\s*(safe|unsafe|blocked)\.?$/.test(normalized) ||
     /^(safe|unsafe|blocked)\.?$/.test(normalized)
   );
+}
+
+function parseGeneratedLog(rawText) {
+  const cleaned = rawText
+    .replace(/^```(?:\w+)?\s*/i, '')
+    .replace(/```$/i, '')
+    .trim();
+
+  let title = '日常开发维护';
+  let content = cleaned;
+
+  const titleMatch = cleaned.match(/(?:^|\n)\s*标题\s*[:：]\s*(.+?)(?=\n|$)/);
+  if (titleMatch && titleMatch[1]) {
+    title = titleMatch[1].trim().replace(/^["“]|["”]$/g, '');
+  }
+
+  const contentMatch = cleaned.match(/(?:^|\n)\s*内容\s*[:：]\s*([\s\S]+)/);
+  if (contentMatch && contentMatch[1]) {
+    content = contentMatch[1].trim();
+  } else if (titleMatch) {
+    content = cleaned
+      .replace(/(?:^|\n)\s*标题\s*[:：]\s*.+?(?=\n|$)/, '')
+      .trim();
+  }
+
+  content = content
+    .replace(/(?:^|\n)\s*内容\s*[:：]\s*/g, '\n')
+    .trim();
+
+  if (title.length > 30) {
+    title = title.slice(0, 30);
+  }
+
+  return { title, content };
 }
 
 // 初始化 db.json (支持多租户升级与历史单用户数据无损自动迁移)
@@ -330,25 +364,25 @@ app.post('/api/generate', async (req, res) => {
 * 不推荐（太虚太浮夸）：
 “针对产品核心展示模块进行了全方位的交互体验设计与视觉包装升级，构建了高复用的视觉规范，显著提升了页面在跨终端环境下的用户体感和开发对接效率。”
 * 推荐（写实自然）：
-“跟产品对了对下期需求的线框图，理了理几个复杂的页面跳转逻辑。下午把这期核心的高保真视觉设计稿细化了下，顺便把本地图层重新命名归档整理了下，给云盘腾了腾空间。”
+“上午把几个历史页面的视觉稿翻出来重新核了下间距和字号，顺手把图层命名和组件分组理顺了。下午对照产品线框补了两个状态页的小细节，又把切图和标注整理了一版，方便后面开发同事对照。”
 ` : `
 * 不推荐（太虚太浮夸）：
 “深度重构了系统核心列表渲染组件，引入了基于虚拟滚动的高效异步加载算法，成功缩减了打包体积，显著优化了页面在低端机型下的首屏交互流畅度。”
 * 推荐（写实自然）：
-“把首页列表数据多的时候有点卡顿的问题给优化了下，改成了按需懒加载渲染。顺手把项目打包的配置文件精简了下，清理了几个过期不用的包，在本地跑了下回归测试。”
+“上午把几个历史页面在不同宽度下的展示看了一遍，顺手调了下按钮间距和空状态文案。下午清理了控制台里几个重复警告，把公共组件的入参又核了一遍，最后在本地跑了下常用流程回归。”
 `;
 
-  const systemPrompt = `你是一个专业 ${jobName}，擅长把当天真实工作记录整理成平实、简洁的公司内部日报。`;
+  const systemPrompt = `你是一个专业 ${jobName}，擅长把当天真实工作记录整理成平实、具体、有执行细节的公司内部日报。`;
   const userPrompt = `请把下面这段今日工作记录整理成一份日常工作日志。
 
 今日工作记录：${tasksText}
 
 要求：
 1. 语气口语化、平实写实，像当天工作复盘；不要写夸张成果，不要编造数据、奖项或上线影响。
-2. 可以在给定工作范围内补充合理执行步骤，比如核对、调整、联调、自测、整理记录等。
-3. 总字数控制在 100 - 150 字之间，分 2-3 条列出。
-4. 每一条工作内容保持 20 到 35 个字左右，句子要完整，有动作、步骤或自测细节。
-5. 顺便帮我起一个 15 字以内的极简日志标题。
+2. 必须写成 3 条内容，每条 45 到 70 个中文字左右，总体约 170 到 230 字。
+3. 每条都要包含“做了什么 + 怎么处理 + 检查/整理结果”，不要只写“调整配置”“自测完成”这种短句。
+4. 可以在给定工作范围内补充合理执行步骤，比如核对页面、调整样式、清理日志、整理组件、联调接口、本地回归等。
+5. 标题 8 到 15 个字，具体一点，不要叫“今日工作简报”。
 
 请参考并对比以下写作风格：
 ${examples}
@@ -356,8 +390,9 @@ ${examples}
 请严格按照以下格式直接输出（不要有任何多余的 Markdown 代码块或前后缀解释说明）：
 标题：[极简日志标题]
 内容：
-1. [第一条工作内容，大白话口语，写实有细节]
-2. [第二条工作内容，大白话口语，写实有细节]`;
+1. [第一条工作内容，45 到 70 个中文字，写实有过程]
+2. [第二条工作内容，45 到 70 个中文字，写实有过程]
+3. [第三条工作内容，45 到 70 个中文字，带检查或整理结果]`;
 
   try {
     const apiBaseUrl = finalApiUrl || 'https://openrouter.ai/api/v1';
@@ -407,19 +442,7 @@ ${examples}
       throw new Error('API 平台返回内容过短，未形成可用日报，请稍后重试或切换其他模型。');
     }
 
-    // 解析
-    let title = '日常开发工作';
-    let content = rawText;
-
-    const titleMatch = rawText.match(/标题：\s*(.+)/);
-    const contentMatch = rawText.match(/内容：\s*([\s\S]+)/);
-
-    if (titleMatch && titleMatch[1]) {
-      title = titleMatch[1].trim();
-    }
-    if (contentMatch && contentMatch[1]) {
-      content = contentMatch[1].trim();
-    }
+    const { title, content } = parseGeneratedLog(rawText);
 
     res.json({ success: true, title, content });
   } catch (error) {
