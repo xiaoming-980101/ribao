@@ -19,10 +19,17 @@ export function createDefaultSettings(overrides = {}) {
 }
 
 export function initDB() {
+  const defaultData = {
+    users: {
+      admin: {
+        password: hashPassword('admin123'),
+        logs: {},
+        settings: createDefaultSettings()
+      }
+    }
+  };
+
   if (!fs.existsSync(DB_FILE)) {
-    const defaultData = {
-      users: {}
-    };
     fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2), 'utf8');
     return;
   }
@@ -31,15 +38,10 @@ export function initDB() {
     const raw = fs.readFileSync(DB_FILE, 'utf8');
     const data = JSON.parse(raw);
     
-    if (!data.users) {
-      console.log('检测到旧版本单用户数据库，正在自动执行无损数据迁移...');
+    if (!data.users || Object.keys(data.users).length === 0) {
+      console.log('检测到数据库中无任何账号或格式不兼容，正在自动注入/迁移默认账号: admin...');
       const migratedLogs = data.logs || {};
-      const migratedSettings = data.settings || {
-        job: 'frontend',
-        tone: 'professional',
-        similarityThreshold: 50,
-        rollingDays: 7
-      };
+      const migratedSettings = data.settings || createDefaultSettings();
       
       const upgradedData = {
         users: {
@@ -51,11 +53,11 @@ export function initDB() {
         }
       };
       fs.writeFileSync(DB_FILE, JSON.stringify(upgradedData, null, 2), 'utf8');
-      console.log('🟢 历史数据成功无损迁移至默认账号: admin (密码: admin123)！');
+      console.log('🟢 默认账号注入/迁移成功 (密码: admin123)！');
     }
   } catch (e) {
-    console.error('初始化数据库失败，重置为空结构:', e);
-    fs.writeFileSync(DB_FILE, JSON.stringify({ users: {} }, null, 2), 'utf8');
+    console.error('初始化数据库失败，重置为默认账号结构:', e);
+    fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2), 'utf8');
   }
 }
 
