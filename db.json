@@ -22,9 +22,10 @@
         "rollingDays": 7,
         "aiApiKey": "",
         "aiApiUrl": "https://openrouter.ai/api/v1",
-        "aiModel": "qwen/qwen-3-coder:free",
+        "aiModel": "openrouter/free",
         "aiEnabled": true,
-        "saveKeyToCloud": false
+        "saveKeyToCloud": true,
+        "customJobName": ""
       }
     }
   }

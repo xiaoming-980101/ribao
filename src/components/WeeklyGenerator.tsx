@@ -93,7 +93,7 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
 
         // 提取日报内容中的条目 (按行或分号分割)
         const lines = log.content.split('\n')
-          .map(line => line.replace(/^\d+[\.、]\s*/, '').trim())
+          .map(line => line.replace(/^\d+[.、]\s*/, '').trim())
           .filter(Boolean);
 
         lines.forEach(line => {

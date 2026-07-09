@@ -9,6 +9,7 @@ RUN npm install --omit=dev
 # 直接拷贝本地打包好的静态资源 dist 和后端服务
 COPY dist ./dist
 COPY server.js ./
+COPY server ./server
 
 EXPOSE 3001
 

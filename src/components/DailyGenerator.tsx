@@ -1,29 +1,34 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles, Copy, Check, Save, AlertTriangle, RefreshCw, Layers } from 'lucide-react';
 import {
-  LogEntry,
   AppData,
   saveLog,
   saveSettings,
-  BACKEND_URL,
+  isOpenRouterApiUrl,
   DEFAULT_AI_API_URL,
-  DEFAULT_AI_MODEL,
-  ModelOption,
-  getCurrentUser,
-  getUserAISettings,
-  saveUserAISettings,
-  loadCachedModels,
-  saveCachedModels,
-  isOpenRouterApiUrl
+  DEFAULT_AI_MODEL
 } from '../utils/storage';
 import {
   expandUserInput,
   generateRandomFrontendDaily,
   calculateSimilarity,
   getSimilarityLevel,
-  generateAIPrompt,
   getJobDisplayName
 } from '../utils/generator';
+
+import { useSimilarityCheck } from '../hooks/useSimilarityCheck';
+import { useAIGeneration } from '../hooks/useAIGeneration';
+import { InputPanel } from './daily/InputPanel';
+import { PreviewPanel } from './daily/PreviewPanel';
+import { AIModelControls } from './daily/AIModelControls';
+
+import { copyTextToClipboard } from '../utils/clipboard';
+import {
+  checkIsRecommended,
+  formatSelectedModel,
+  formatRouteLabel,
+  formatRouteTitle,
+  buildDefaultCompareModels
+} from '../utils/modelHelpers';
 
 interface DailyGeneratorProps {
   appData: AppData;
@@ -32,234 +37,95 @@ interface DailyGeneratorProps {
   onNavigateToTab?: (tab: string) => void;
 }
 
-// 智能识别核心免费推荐大模型 (对中文大白话生成效果最佳且免费的型号)
-const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) => {
-  const idLower = m.id.toLowerCase();
-  if (m.isFree) {
-    if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('coder')) return true;
-    if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('next')) return true;
-    if (idLower.includes('llama') && idLower.includes('3.3')) return true;
-    if (idLower.includes('gemma')) return true;
-  }
-  return false;
-};
-
-type RouteInfo = {
-  requestedModel?: string;
-  actualModel?: string;
-  providerName?: string;
-  retryAfterSeconds?: number;
-  isAutoRoute?: boolean;
-  status?: 'success' | 'error';
-  statusCode?: number;
-  errorType?: 'rate_limit' | 'no_access' | 'invalid_model' | 'safety' | 'empty' | 'unknown';
-};
-
-type CompareResult = {
-  id: string;
-  requestedModel: string;
-  title?: string;
-  content?: string;
-  routeInfo?: RouteInfo;
-  error?: string;
-};
-
-const formatSelectedModel = (modelId: string) => modelId.split('/').pop() || modelId;
-
-const formatRouteLabel = (routeInfo?: RouteInfo | null) => {
-  if (!routeInfo) return '';
-  const parts = [
-    routeInfo.actualModel || routeInfo.requestedModel,
-    routeInfo.providerName
-  ].filter(Boolean);
-  return parts.join(' · ');
-};
-
-const formatRouteTitle = (routeInfo?: RouteInfo | null) => {
-  if (!routeInfo) return '';
-  const retryText = routeInfo.retryAfterSeconds ? `；建议 ${routeInfo.retryAfterSeconds} 秒后重试` : '';
-  const statusText = routeInfo.statusCode ? `；状态码：${routeInfo.statusCode}` : '';
-  return `请求模型：${routeInfo.requestedModel || '未知'}；实际模型：${routeInfo.actualModel || '未知'}${routeInfo.providerName ? `；Provider：${routeInfo.providerName}` : ''}${statusText}${retryText}`;
-};
-
 const DOUBAO_CHAT_URL = 'https://www.doubao.com/chat/';
 
-const getDefaultModelOptions = (aiApiUrl: string): ModelOption[] => (
-  isOpenRouterApiUrl(aiApiUrl)
-    ? [{ id: DEFAULT_AI_MODEL, name: 'OpenRouter: Free Auto-Route (免费自动路由)', isFree: true }]
-    : []
-);
-
-const LEGACY_INVALID_MODELS = new Set([
-  'qwen/qwen-3-coder:free'
-]);
-
-const normalizeModelId = (modelId: string, aiApiUrl: string) => {
-  const isOpenRouterApi = isOpenRouterApiUrl(aiApiUrl);
-  if (!isOpenRouterApi && modelId === DEFAULT_AI_MODEL) return '';
-  if (LEGACY_INVALID_MODELS.has(modelId)) return isOpenRouterApi ? DEFAULT_AI_MODEL : '';
-  return modelId;
-};
-
-const buildFallbackQueue = (currentModel: string, models: ModelOption[] = [], aiApiUrl: string = DEFAULT_AI_API_URL) => {
-  const seen = new Set<string>();
-  const recommendedFree = models
-    .filter((model) => model.isFree && checkIsRecommended(model))
-    .map((model) => model.id);
-  const otherFree = models
-    .filter((model) => model.isFree && !checkIsRecommended(model))
-    .map((model) => model.id);
-
-  const defaultModels = getDefaultModelOptions(aiApiUrl).map((model) => model.id);
-
-  return [normalizeModelId(currentModel, aiApiUrl), ...defaultModels, ...recommendedFree, ...otherFree]
-    .filter((modelId) => {
-      if (!modelId || LEGACY_INVALID_MODELS.has(modelId) || seen.has(modelId)) return false;
-      seen.add(modelId);
-      return true;
-    })
-    .slice(0, 5);
-};
-
-const buildDefaultCompareModels = (currentModel: string, models: ModelOption[] = [], aiApiUrl: string = DEFAULT_AI_API_URL) => buildFallbackQueue(currentModel, models, aiApiUrl).slice(0, 3);
-
-const classifyGenerateError = (message: string = '', statusCode?: number): RouteInfo['errorType'] => {
-  const lower = message.toLowerCase();
-  if (statusCode === 429 || lower.includes('429') || lower.includes('too many requests') || lower.includes('rate limit') || lower.includes('限流')) return 'rate_limit';
-  if (statusCode === 403 || lower.includes('403') || lower.includes('no access') || lower.includes('not allowed') || lower.includes('无权限')) return 'no_access';
-  if (statusCode === 400 && (lower.includes('not a valid model') || lower.includes('invalid model') || lower.includes('model id'))) return 'invalid_model';
-  if (lower.includes('安全审核占位') || lower.includes('safety') || lower.includes('moderation')) return 'safety';
-  if (lower.includes('空响应') || lower.includes('内容过短')) return 'empty';
-  return 'unknown';
-};
-
-const formatErrorReason = (error?: string, routeInfo?: RouteInfo) => {
-  const errorType = routeInfo?.errorType || classifyGenerateError(error || '', routeInfo?.statusCode);
-  if (errorType === 'no_access') return '当前 Key 无权限';
-  if (errorType === 'invalid_model') return '模型 ID 已失效';
-  if (errorType === 'rate_limit') return routeInfo?.retryAfterSeconds ? `限流，约 ${routeInfo.retryAfterSeconds} 秒后可重试` : '限流';
-  if (errorType === 'safety') return '上游安全审核占位';
-  if (errorType === 'empty') return '返回内容不可用';
-  return error || '模型请求失败';
-};
-
 export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNavigateToTab }: DailyGeneratorProps) {
-  // 当前选择的日期 (YYYY-MM-DD)
   const [selectedDate, setSelectedDate] = useState<string>('');
-  
-  // 工作模式: 'task' (正常任务), 'idle' (无特定任务/维护), 'study' (技术学习), 'ai_prompt' (豆包提示词)
   const [mode, setMode] = useState<'task' | 'idle' | 'study' | 'ai_prompt'>('task');
-  
-  // 用户的简短任务输入
   const [userInput, setUserInput] = useState<string>('');
-
-  // 临时生成历史缓存（解决未存盘连续生成时的查重检测）
   const [sessionHistory, setSessionHistory] = useState<string[]>([]);
 
-  // 生成的表单字段
+  // 表单字段
   const [title, setTitle] = useState<string>('');
   const [hours, setHours] = useState<number>(8);
   const [cooperation, setCooperation] = useState<boolean>(false);
   const [difficulty, setDifficulty] = useState<boolean>(false);
   const [content, setContent] = useState<string>('');
 
-  // 相似度与查重状态
-  const [maxSimilarity, setMaxSimilarity] = useState<number>(0);
-  const [similarDate, setSimilarDate] = useState<string>('');
-  
-  // UI 交互状态
+  // 交互状态
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
 
-  // 本地实时选择的岗位与语气风格 (移动至主界面实时调控，消除延迟)
+  // 岗位和语气
   const [job, setJob] = useState<string>('frontend');
   const [customJobName, setCustomJobName] = useState<string>('');
   const [tone, setTone] = useState<string>('professional');
 
-  // 大模型偏好快捷读取与快速切换
-  const [aiSettings, setAiSettings] = useState({
-    aiEnabled: false,
-    aiApiKey: '',
-    aiApiUrl: DEFAULT_AI_API_URL,
-    aiModel: DEFAULT_AI_MODEL
+  // 查重 hook
+  const { maxSimilarity, similarDate } = useSimilarityCheck({
+    content,
+    selectedDate,
+    logs: appData.logs || {},
+    sessionHistory
   });
-  const [lastRouteInfo, setLastRouteInfo] = useState<RouteInfo | null>(null);
-  const [compareMode, setCompareMode] = useState<boolean>(false);
-  const [compareModels, setCompareModels] = useState<string[]>([]);
-  const [compareResults, setCompareResults] = useState<CompareResult[]>([]);
-  const [modelList, setModelList] = useState<ModelOption[]>([]);
-  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
-  const [searchQuery, setSearchQuery] = useState<string>('');
-  const isOpenRouterApi = isOpenRouterApiUrl(aiSettings.aiApiUrl);
 
-  const loadAISettings = () => {
-    const localAISettings = getUserAISettings();
-    const cloudSavePref = appData.settings?.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
-    const resolvedApiUrl = localAISettings.aiApiUrl || appData.settings?.aiApiUrl || DEFAULT_AI_API_URL;
-    const rawModel = localAISettings.aiModel || appData.settings?.aiModel || (isOpenRouterApiUrl(resolvedApiUrl) ? DEFAULT_AI_MODEL : '');
-    const resolvedModel = normalizeModelId(rawModel, resolvedApiUrl);
-    if ((localAISettings.aiModel && localAISettings.aiModel !== resolvedModel) || (appData.settings?.aiModel && appData.settings.aiModel !== resolvedModel)) {
-      saveUserAISettings({ aiModel: resolvedModel });
-    }
-    setAiSettings({
-      aiEnabled: localAISettings.aiEnabled !== undefined ? !!localAISettings.aiEnabled : (appData.settings?.aiEnabled || false),
-      aiApiKey: cloudSavePref ? (appData.settings?.aiApiKey || localAISettings.aiApiKey || '') : (localAISettings.aiApiKey || ''),
-      aiApiUrl: resolvedApiUrl,
-      aiModel: resolvedModel
-    });
-  };
+  // AI 生成 hook
+  const {
+    aiSettings,
+    lastRouteInfo,
+    compareMode,
+    setCompareMode,
+    compareModels,
+    setCompareModels,
+    compareResults,
+    setCompareResults,
+    modelList,
+    isDropdownOpen,
+    setIsDropdownOpen,
+    searchQuery,
+    setSearchQuery,
+    generating,
+    handleQuickChangeModel,
+    toggleCompareModel,
+    applyCompareResult,
+    handleGenerate
+  } = useAIGeneration({
+    appData,
+    userInput,
+    job,
+    customJobName,
+    tone,
+    mode,
+    selectedDate,
+    onSaveSuccess,
+    showToast,
+    onNavigateToTab,
+    setTitle,
+    setHours,
+    setCooperation,
+    setDifficulty,
+    setContent,
+    setSessionHistory
+  });
 
-  useEffect(() => {
-    loadAISettings();
-  }, [appData.settings]);
-
-  useEffect(() => {
-    const refreshFromStorage = () => loadAISettings();
-    window.addEventListener('focus', refreshFromStorage);
-    window.addEventListener('storage', refreshFromStorage);
-    window.addEventListener('winner-daily-settings-updated', refreshFromStorage);
-    return () => {
-      window.removeEventListener('focus', refreshFromStorage);
-      window.removeEventListener('storage', refreshFromStorage);
-      window.removeEventListener('winner-daily-settings-updated', refreshFromStorage);
-    };
-  }, [appData.settings]);
-
-  useEffect(() => {
-    setLastRouteInfo(null);
-  }, [aiSettings.aiModel]);
-
-  useEffect(() => {
-    if (compareModels.length === 0) {
-      setCompareModels(buildDefaultCompareModels(aiSettings.aiModel, modelList, aiSettings.aiApiUrl));
-    }
-  }, [aiSettings.aiModel, aiSettings.aiApiUrl, compareModels.length, modelList]);
-
-  useEffect(() => {
-    const allowedModels = new Set([
-      aiSettings.aiModel,
-      ...modelList.map((model) => model.id),
-      ...getDefaultModelOptions(aiSettings.aiApiUrl).map((model) => model.id)
-    ].filter(Boolean));
-
-    setCompareModels((prev) => {
-      const filtered = prev
-        .map((modelId) => normalizeModelId(modelId, aiSettings.aiApiUrl))
-        .filter((modelId) => allowedModels.has(modelId) && !LEGACY_INVALID_MODELS.has(modelId));
-
-      if (filtered.length > 0) return Array.from(new Set(filtered)).slice(0, 3);
-      return buildDefaultCompareModels(aiSettings.aiModel, modelList, aiSettings.aiApiUrl);
-    });
-  }, [aiSettings.aiApiUrl, aiSettings.aiModel, modelList]);
-
-  // 同步用户在主界面上临时更改的配置，静默向后端保存偏好
+  // 选项联动保存配置
   const handleJobChange = async (newJob: string) => {
     setJob(newJob);
     try {
       await saveSettings({ job: newJob, customJobName, tone });
       onSaveSuccess();
     } catch (e) {
-      console.error('静默保存岗位偏好失败:', e);
+      console.error('静默保存岗位失败:', e);
+    }
+  };
+
+  const handleToneChange = async (newTone: string) => {
+    setTone(newTone);
+    try {
+      await saveSettings({ job, customJobName, tone: newTone });
+      onSaveSuccess();
+    } catch (e) {
+      console.error('静默保存语气失败:', e);
     }
   };
 
@@ -272,222 +138,6 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     }
   };
 
-  const handleToneChange = async (newTone: string) => {
-    setTone(newTone);
-    try {
-      await saveSettings({ job, customJobName, tone: newTone });
-      onSaveSuccess();
-    } catch (e) {
-      console.error('静默保存语气偏好失败:', e);
-    }
-  };
-
-  const handleQuickChangeModel = async (newModel: string) => {
-    const normalizedModel = normalizeModelId(newModel, aiSettings.aiApiUrl);
-    const nextSettings = { ...aiSettings, aiModel: normalizedModel };
-    setAiSettings(nextSettings);
-    setLastRouteInfo(null);
-    saveUserAISettings(nextSettings);
-    try {
-      await saveSettings({
-        aiEnabled: nextSettings.aiEnabled,
-        aiApiUrl: nextSettings.aiApiUrl,
-        aiModel: nextSettings.aiModel
-      });
-      onSaveSuccess();
-    } catch (e) {
-      console.error('静默保存快捷模型失败:', e);
-    }
-    showToast(`🎯 已快捷切换大模型为: ${formatSelectedModel(normalizedModel)}`, 'success');
-  };
-
-  const toggleCompareModel = (modelId: string) => {
-    setCompareModels((prev) => {
-      if (prev.includes(modelId)) {
-        return prev.length > 1 ? prev.filter((id) => id !== modelId) : prev;
-      }
-      if (prev.length >= 3) {
-        showToast('最多同时对比 3 个模型，可以先取消一个再选择。', 'info');
-        return prev;
-      }
-      return [...prev, modelId];
-    });
-  };
-
-  const applyCompareResult = (result: CompareResult) => {
-    if (!result.title || !result.content) return;
-    setTitle(result.title);
-    setHours(8);
-    setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
-    setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
-    setContent(result.content);
-    if (result.routeInfo) setLastRouteInfo({ ...result.routeInfo, status: 'success' });
-    setSessionHistory((prev) => {
-      const next = [...prev, result.content || ''];
-      if (next.length > 8) next.shift();
-      return next;
-    });
-    showToast(`已采用 ${formatRouteLabel(result.routeInfo) || formatSelectedModel(result.requestedModel)} 的候选日报。`, 'success');
-  };
-
-  const copyTextToClipboard = async (text: string) => {
-    const value = text || '';
-    if (!value.trim()) return false;
-
-    let textarea: HTMLTextAreaElement | null = null;
-    try {
-      textarea = document.createElement('textarea');
-      textarea.value = value;
-      textarea.setAttribute('readonly', 'true');
-      textarea.style.position = 'fixed';
-      textarea.style.left = '-9999px';
-      textarea.style.top = '0';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.focus();
-      textarea.select();
-      textarea.setSelectionRange(0, textarea.value.length);
-      if (document.execCommand('copy')) {
-        return true;
-      }
-    } catch (err) {
-      console.warn('备用复制方案失败:', err);
-    } finally {
-      if (textarea?.parentNode) {
-        textarea.parentNode.removeChild(textarea);
-      }
-    }
-
-    if (window.isSecureContext && navigator.clipboard?.writeText) {
-      try {
-        await navigator.clipboard.writeText(value);
-        return true;
-      } catch (err) {
-        console.warn('Clipboard API 复制失败:', err);
-      }
-    }
-
-    return false;
-  };
-
-  const copyPromptAndOpenDoubao = async (
-    prompt: string,
-    successMessage: string,
-    blockedMessage: string,
-    toastType: 'success' | 'error' | 'info' = 'success'
-  ) => {
-    const copyResult = copyTextToClipboard(prompt);
-    const newWindow = window.open(DOUBAO_CHAT_URL, '_blank');
-    const copied = await copyResult;
-
-    if (newWindow) {
-      showToast(copied ? successMessage : '已打开豆包新对话，请手动复制右侧 Prompt 后粘贴。', copied ? toastType : 'info');
-    } else {
-      showToast(copied ? blockedMessage : '浏览器拦截了豆包窗口，请手动复制右侧 Prompt 后打开豆包。', 'info');
-    }
-    return copied;
-  };
-
-  const handleCopyPromptAndOpenDoubao = async (fieldName: string) => {
-    const copied = await copyPromptAndOpenDoubao(
-      content,
-      'Prompt 已复制，并已打开豆包新对话，请粘贴后发送。',
-      'Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
-    );
-    if (copied) {
-      setCopiedField(fieldName);
-      setTimeout(() => setCopiedField(null), 1500);
-    }
-  };
-
-  const hasUsableFreeModels = (models: ModelOption[]) => models.some((model) =>
-    model.isFree && model.id !== DEFAULT_AI_MODEL && !LEGACY_INVALID_MODELS.has(model.id)
-  );
-
-  const refreshAvailableModels = async () => {
-    if (!aiSettings.aiApiKey) return modelList;
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/api/models`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Name': getCurrentUser()
-        },
-        body: JSON.stringify({
-          aiApiKey: aiSettings.aiApiKey,
-          aiApiUrl: aiSettings.aiApiUrl
-        })
-      });
-
-      if (!response.ok) return modelList;
-      const resData = await response.json();
-      if (!resData.success || !Array.isArray(resData.models)) return modelList;
-
-      const cleanedModels: ModelOption[] = resData.models
-        .filter((model: ModelOption) => model?.id && !LEGACY_INVALID_MODELS.has(model.id));
-      const mergedModels = [
-        ...getDefaultModelOptions(aiSettings.aiApiUrl),
-        ...cleanedModels.filter((model) => model.id !== DEFAULT_AI_MODEL)
-      ];
-      setModelList(mergedModels);
-      saveCachedModels(mergedModels, aiSettings.aiApiUrl);
-      return mergedModels;
-    } catch (error) {
-      console.warn('自动刷新可用模型列表失败:', error);
-      return modelList;
-    }
-  };
-
-  const requestGenerate = async (modelToTry: string, overrides: Record<string, any> = {}) => {
-    const response = await fetch(`${BACKEND_URL}/api/generate`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Name': getCurrentUser()
-      },
-      body: JSON.stringify({
-        userInput,
-        job,
-        customJobName,
-        tone,
-        mode,
-        aiApiKey: aiSettings.aiApiKey,
-        aiApiUrl: aiSettings.aiApiUrl,
-        aiModel: modelToTry,
-        ...overrides
-      })
-    });
-
-    if (!response.ok) {
-      let errData: any = {};
-      try {
-        errData = await response.json();
-      } catch (e) {
-        errData = { error: '联调接口请求失败' };
-      }
-      const requestError: any = new Error(errData.error || '联调接口请求失败');
-      requestError.statusCode = response.status;
-      requestError.routeInfo = {
-        ...(errData.routeInfo || { requestedModel: modelToTry }),
-        statusCode: response.status,
-        errorType: errData.routeInfo?.errorType || classifyGenerateError(errData.error || '联调接口请求失败', response.status)
-      };
-      throw requestError;
-    }
-
-    return response.json();
-  };
-
-  const prepareFallbackQueue = async () => {
-    let availableModels = modelList;
-    if (!hasUsableFreeModels(availableModels)) {
-      showToast('🔄 正在刷新当前 Key 可用的免费模型列表...', 'info');
-      availableModels = await refreshAvailableModels();
-    }
-    return buildFallbackQueue(aiSettings.aiModel, availableModels, aiSettings.aiApiUrl);
-  };
-
   useEffect(() => {
     if (appData.settings) {
       setJob(appData.settings.job || 'frontend');
@@ -496,21 +146,16 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     }
   }, [appData.settings]);
 
-  useEffect(() => {
-    setModelList(loadCachedModels(aiSettings.aiApiUrl) || getDefaultModelOptions(aiSettings.aiApiUrl));
-  }, [aiSettings.aiApiUrl]);
-
   // 初始化选择日期为今天
   useEffect(() => {
     const today = new Date();
     const yyyy = today.getFullYear();
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     const dd = String(today.getDate()).padStart(2, '0');
-    const todayStr = `${yyyy}-${mm}-${dd}`;
-    setSelectedDate(todayStr);
+    setSelectedDate(`${yyyy}-${mm}-${dd}`);
   }, []);
 
-  // 如果该日期已有保存的日志，则自动加载
+  // 自动加载该日期的日志
   useEffect(() => {
     if (selectedDate) {
       if (appData.logs[selectedDate]) {
@@ -521,7 +166,6 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         setDifficulty(existing.difficulty);
         setContent(existing.content);
       } else {
-        // 否则清空或保留默认
         setTitle('');
         setHours(8);
         setContent('');
@@ -529,63 +173,31 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         setDifficulty(false);
       }
     }
-  }, [selectedDate]);
+  }, [selectedDate, appData.logs]);
 
-  // 监听日志内容变化，实时进行查重比对
-  useEffect(() => {
-    if (!content) {
-      setMaxSimilarity(0);
-      setSimilarDate('');
-      return;
-    }
-
-    let maxSim = 0;
-    let simDate = '';
-
-    // 1. 对比过去 30 天内除当天以外的日志
-    Object.entries(appData.logs).forEach(([date, log]) => {
-      if (date === selectedDate) return;
-      
-      const todayDate = new Date(selectedDate);
-      const logDate = new Date(date);
-      const diffTime = Math.abs(todayDate.getTime() - logDate.getTime());
-      const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-      if (diffDays > 30) return;
-
-      const sim = calculateSimilarity(content, log.content);
-      if (sim > maxSim) {
-        maxSim = sim;
-        simDate = `${date} 已保存的日志`;
-      }
-    });
-
-    // 2. 对比本会话连续生成历史（防止点“智能生成”产生雷同）
-    sessionHistory.forEach((histContent, idx) => {
-      if (histContent === content) return; // 排除自身比对
-      const sim = calculateSimilarity(content, histContent);
-      if (sim > maxSim) {
-        maxSim = sim;
-        simDate = `刚才生成的第 ${idx + 1} 稿草稿`;
-      }
-    });
-
-    setMaxSimilarity(maxSim);
-    setSimilarDate(simDate);
-  }, [content, selectedDate, appData.logs]);
+  // 快速选择日期
+  const setQuickDate = (offset: number) => {
+    const d = new Date();
+    d.setDate(d.getDate() - offset);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    setSelectedDate(`${yyyy}-${mm}-${dd}`);
+  };
 
   // 本地碰撞防重生成
-  const generateLocally = (job: string) => {
+  const generateLocally = (jobType: string) => {
     let bestResult: any = null;
     let lowestSim = 100;
 
     for (let attempts = 0; attempts < 10; attempts++) {
       let tempResult: any;
       if (mode === 'task') {
-        tempResult = expandUserInput(userInput + (attempts > 0 ? ` #${attempts}` : ''), job, customJobName);
+        tempResult = expandUserInput(userInput + (attempts > 0 ? ` #${attempts}` : ''), jobType, customJobName);
       } else if (mode === 'idle') {
-        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job, customJobName);
+        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, jobType, customJobName);
       } else {
-        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, job, customJobName);
+        tempResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, jobType, customJobName);
       }
 
       let maxSim = 0;
@@ -625,232 +237,6 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     }
   };
 
-  // 一键生成/扩写日志
-  const handleGenerate = async () => {
-    // 移除了局部的 const job = appData.settings.job，直接采用组件的 job State
-    if (mode === 'ai_prompt') {
-      const fallbackPrompt = generateAIPrompt(userInput, job, customJobName, tone);
-      setTitle('从大模型复制结果粘贴至此');
-      setHours(8);
-      setCooperation(false);
-      setDifficulty(false);
-      setContent(fallbackPrompt);
-
-      if (!aiSettings.aiEnabled || !aiSettings.aiApiKey) {
-        showToast('📋 已生成本地内置 Prompt，请点击下方按钮复制并前往豆包。', 'info');
-        return;
-      }
-
-      setSaveStatus('saving');
-      setLastRouteInfo(null);
-      let selectedPrompt = fallbackPrompt;
-      let promptGeneratedByAI = false;
-
-      try {
-        const fallbackQueue = await prepareFallbackQueue();
-        if (fallbackQueue.length === 0) {
-          showToast('⚠️ 当前上游没有可用模型，已改用本地内置 Prompt。', 'info');
-        }
-
-        for (let attemptIndex = 0; attemptIndex < fallbackQueue.length; attemptIndex++) {
-          const modelToTry = fallbackQueue[attemptIndex];
-          try {
-            showToast(
-              attemptIndex === 0
-                ? `🤖 正在用大模型 [${formatSelectedModel(modelToTry)}] 生成豆包 Prompt...`
-                : `🔁 正在切换到 [${formatSelectedModel(modelToTry)}] 重试生成 Prompt...`,
-              'info'
-            );
-            const resData = await requestGenerate(modelToTry, { mode: 'doubao_prompt' });
-            if (resData.success && resData.content) {
-              selectedPrompt = resData.content;
-              promptGeneratedByAI = true;
-              const routeInfo: RouteInfo | null = resData.routeInfo
-                ? { ...resData.routeInfo, status: 'success' }
-                : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
-              setLastRouteInfo(routeInfo);
-              break;
-            }
-          } catch (error: any) {
-            const routeInfo: RouteInfo = error.routeInfo
-              ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
-              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error', statusCode: error.statusCode, errorType: classifyGenerateError(error.message, error.statusCode) };
-            setLastRouteInfo(routeInfo);
-            if (attemptIndex < fallbackQueue.length - 1) {
-              showToast(`⚠️ ${formatRouteLabel(routeInfo) || formatSelectedModel(modelToTry)} ${formatErrorReason(error.message, routeInfo)}，正在尝试下一个模型...`, 'info');
-            }
-          }
-        }
-      } finally {
-        setSaveStatus('idle');
-      }
-
-      setContent(selectedPrompt);
-      showToast(
-        promptGeneratedByAI
-          ? '📋 大模型 Prompt 已生成完成，请点击下方按钮复制并前往豆包。'
-          : '📋 大模型不可用，已生成本地内置 Prompt，请点击下方按钮复制并前往豆包。',
-        promptGeneratedByAI ? 'success' : 'info'
-      );
-      return;
-    }
-
-    // 在线 AI 智能生成
-    if (aiSettings.aiEnabled) {
-      // 未配置 Key 时拦截，引导用户去配置
-      if (!aiSettings.aiApiKey) {
-        showToast('⚠️ 已开启 AI 模式，但尚未配置 API Key！请前往《个性化配置》填写您的 OpenRouter Key。', 'error');
-        if (onNavigateToTab) onNavigateToTab('settings');
-        return;
-      }
-      setSaveStatus('saving'); // 借用保存 loading 状态
-      setLastRouteInfo(null);
-      const fallbackQueue = await prepareFallbackQueue();
-      if (fallbackQueue.length === 0) {
-        setSaveStatus('idle');
-        showToast('⚠️ 当前上游没有可用模型，请先在《个性化配置》同步模型列表或手动填写真实模型 ID。', 'error');
-        if (onNavigateToTab) onNavigateToTab('settings');
-        return;
-      }
-      showToast(`🤖 正在联调大模型 [${formatSelectedModel(fallbackQueue[0])}] 生成日报...`, 'info');
-      let lastError: any = null;
-
-      try {
-        if (compareMode) {
-          const sourceModels = compareModels.length > 0 ? compareModels : fallbackQueue;
-          const selectedModels = Array.from(new Set(sourceModels.map((modelId) => normalizeModelId(modelId, aiSettings.aiApiUrl)).filter((modelId) => !LEGACY_INVALID_MODELS.has(modelId)))).slice(0, 3);
-          setCompareResults([]);
-          showToast(`🧪 正在同时对比 ${selectedModels.length} 个模型，请稍候...`, 'info');
-
-          const settledResults = await Promise.allSettled(
-            selectedModels.map(async (modelToTry, index) => {
-              const resData = await requestGenerate(modelToTry);
-              if (!resData.success) {
-                throw new Error('模型返回失败');
-              }
-              const routeInfo: RouteInfo = resData.routeInfo
-                ? { ...resData.routeInfo, status: 'success' }
-                : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
-              return {
-                id: `${modelToTry}-${index}-${Date.now()}`,
-                requestedModel: modelToTry,
-                title: resData.title,
-                content: resData.content,
-                routeInfo
-              } as CompareResult;
-            })
-          );
-
-          const results: CompareResult[] = settledResults.map((result, index) => {
-            const requestedModel = selectedModels[index];
-            if (result.status === 'fulfilled') {
-              return result.value;
-            }
-            const reason: any = result.reason;
-            const routeInfo: RouteInfo = reason?.routeInfo
-              ? { ...reason.routeInfo, requestedModel: reason.routeInfo.requestedModel || requestedModel, status: 'error', statusCode: reason.statusCode || reason.routeInfo.statusCode, errorType: reason.routeInfo.errorType || classifyGenerateError(reason?.message, reason.statusCode) }
-              : { requestedModel, actualModel: requestedModel, status: 'error', statusCode: reason?.statusCode, errorType: classifyGenerateError(reason?.message, reason?.statusCode) };
-            return {
-              id: `${requestedModel}-${index}-${Date.now()}`,
-              requestedModel,
-              routeInfo,
-              error: formatErrorReason(reason?.message || '模型请求失败', routeInfo)
-            };
-          });
-
-          setCompareResults(results);
-          const firstSuccess = results.find((result) => result.content);
-          if (firstSuccess?.routeInfo) setLastRouteInfo(firstSuccess.routeInfo);
-
-          const successCount = results.filter((result) => result.content).length;
-          if (successCount > 0) {
-            showToast(`🧪 已生成 ${successCount} 份候选，请在右侧选择采用；不满意可重新对比。`, 'success');
-            return;
-          }
-
-          lastError = settledResults.find((result) => result.status === 'rejected');
-          const prompt = generateAIPrompt(userInput, job, customJobName, tone);
-          setCompareMode(false);
-          setMode('ai_prompt');
-          setTitle('复制提示词到豆包生成');
-          setHours(8);
-          setCooperation(false);
-          setDifficulty(false);
-          setContent(prompt);
-          showToast('📋 3 个模型都失败了，已生成豆包 Prompt，请点击下方按钮复制并前往豆包。', 'error');
-          return;
-        }
-
-        for (let attemptIndex = 0; attemptIndex < fallbackQueue.length; attemptIndex++) {
-          const modelToTry = fallbackQueue[attemptIndex];
-          if (attemptIndex > 0) {
-            showToast(`🔁 自动切换到 [${formatSelectedModel(modelToTry)}] 重试生成...`, 'info');
-          }
-
-          try {
-            const resData = await requestGenerate(modelToTry);
-            if (resData.success) {
-              const routeInfo: RouteInfo | null = resData.routeInfo
-                ? { ...resData.routeInfo, status: 'success' }
-                : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
-              setLastRouteInfo(routeInfo);
-              setTitle(resData.title);
-              setHours(8);
-              // 智能推导部门协作与工作难点
-              setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
-              setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
-              setContent(resData.content);
-              const routeLabel = formatRouteLabel(routeInfo);
-              showToast(`🎉 在线大模型日报生成成功！${routeLabel ? `实际模型：${routeLabel}` : '已填充表单。'}`, 'success');
-
-              // 加入去重会话缓存
-              setSessionHistory((prev) => {
-                const next = [...prev, resData.content];
-                if (next.length > 8) next.shift();
-                return next;
-              });
-              return;
-            }
-          } catch (error: any) {
-            lastError = error;
-            console.error(`在线 AI 生成失败 (${modelToTry}):`, error);
-            const routeInfo: RouteInfo = error.routeInfo
-              ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
-              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error', statusCode: error.statusCode, errorType: classifyGenerateError(error.message, error.statusCode) };
-            setLastRouteInfo(routeInfo);
-            const routeLabel = formatRouteLabel(routeInfo) || formatSelectedModel(modelToTry);
-            const canRetry = attemptIndex < fallbackQueue.length - 1;
-
-            if (canRetry) {
-              const reason = formatErrorReason(error.message, routeInfo);
-              showToast(`⚠️ ${routeLabel} ${reason}，正在自动尝试下一个模型...`, 'info');
-            }
-          }
-        }
-
-        const prompt = generateAIPrompt(userInput, job, customJobName, tone);
-        setCompareMode(false);
-        setMode('ai_prompt');
-        setTitle('复制提示词到豆包生成');
-        setHours(8);
-        setCooperation(false);
-        setDifficulty(false);
-        setContent(prompt);
-
-        showToast('📋 在线模型连续失败，已生成豆包 Prompt，请点击下方按钮复制并前往豆包。', 'error');
-      } finally {
-        if (lastError) {
-          console.error('本轮在线 AI 自动切换后仍未成功:', lastError);
-        }
-        setSaveStatus('idle');
-      }
-      return;
-    }
-
-    // 本地引擎生成
-    generateLocally(job);
-  };
-
   const tweakLocally = () => {
     if (mode === 'idle') {
       const result = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job, customJobName);
@@ -859,12 +245,10 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       const result = generateRandomFrontendDaily(selectedDate + Math.random().toString(), true, job, customJobName);
       setContent(result.content);
     } else {
-      // 任务模式下，随机从模版库拼接一句日常优化，降低重复度
       const extraResult = generateRandomFrontendDaily(selectedDate + Math.random().toString(), false, job, customJobName);
       const extraLine = extraResult.content.split('\n')[0].replace(/^\d+\.\s*/, '');
       const currentLines = content.split('\n');
       if (currentLines.length > 0) {
-        // 替换最后一行或追加一行
         if (currentLines.length >= 2) {
           currentLines[currentLines.length - 1] = `${currentLines.length}. 日常系统维护：${extraLine}`;
         } else {
@@ -875,86 +259,28 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     }
   };
 
-  // 智能微调：AI 可用时走大模型，AI 不可用时才使用本地模板兜底。
-  const handleTweak = async () => {
+  const handleTweakWrapper = async () => {
     if (!content.trim()) return;
 
     if (!aiSettings.aiEnabled || !aiSettings.aiApiKey || mode === 'ai_prompt') {
       tweakLocally();
       return;
     }
+    await handleGenerate({
+      mode: 'tweak',
+      currentTitle: title,
+      currentContent: content
+    });
+  };
 
-    setSaveStatus('saving');
-    setLastRouteInfo(null);
-    let lastError: any = null;
-
-    try {
-      const fallbackQueue = await prepareFallbackQueue();
-      if (fallbackQueue.length === 0) {
-        showToast('⚠️ 当前上游没有可用模型，请先同步模型列表或手动填写真实模型 ID。', 'error');
-        if (onNavigateToTab) onNavigateToTab('settings');
-        return;
-      }
-
-      for (let attemptIndex = 0; attemptIndex < fallbackQueue.length; attemptIndex++) {
-        const modelToTry = fallbackQueue[attemptIndex];
-        if (attemptIndex === 0) {
-          showToast(`🤖 正在用大模型 [${formatSelectedModel(modelToTry)}] 微调当前日报...`, 'info');
-        } else {
-          showToast(`🔁 微调失败，自动切换到 [${formatSelectedModel(modelToTry)}] 重试...`, 'info');
-        }
-
-        try {
-          const resData = await requestGenerate(modelToTry, {
-            mode: 'tweak',
-            currentTitle: title,
-            currentContent: content
-          });
-
-          if (resData.success) {
-            const routeInfo: RouteInfo | null = resData.routeInfo
-              ? { ...resData.routeInfo, status: 'success' }
-              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
-            setLastRouteInfo(routeInfo);
-            setTitle(resData.title || title);
-            setContent(resData.content);
-            setSessionHistory((prev) => {
-              const next = [...prev, resData.content];
-              if (next.length > 8) next.shift();
-              return next;
-            });
-            showToast(`🎉 大模型微调完成！${formatRouteLabel(routeInfo) ? `实际模型：${formatRouteLabel(routeInfo)}` : ''}`, 'success');
-            return;
-          }
-        } catch (error: any) {
-          lastError = error;
-          const routeInfo: RouteInfo = error.routeInfo
-            ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
-            : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error', statusCode: error.statusCode, errorType: classifyGenerateError(error.message, error.statusCode) };
-          setLastRouteInfo(routeInfo);
-          if (attemptIndex < fallbackQueue.length - 1) {
-            showToast(`⚠️ ${formatRouteLabel(routeInfo) || formatSelectedModel(modelToTry)} ${formatErrorReason(error.message, routeInfo)}，正在尝试下一个模型...`, 'info');
-          }
-        }
-      }
-
-      showToast(`❌ 大模型微调失败，已保留原内容。${lastError?.message ? `原因：${formatErrorReason(lastError.message, lastError.routeInfo)}` : ''}`, 'error');
-    } finally {
-      setSaveStatus('idle');
+  const handleGenerateWrapper = async () => {
+    if (!aiSettings.aiEnabled || !aiSettings.aiApiKey) {
+      generateLocally(job);
+      return;
     }
+    await handleGenerate();
   };
 
-  // 快速选择日期
-  const setQuickDate = (offset: number) => {
-    const d = new Date();
-    d.setDate(d.getDate() - offset);
-    const yyyy = d.getFullYear();
-    const mm = String(d.getMonth() + 1).padStart(2, '0');
-    const dd = String(d.getDate()).padStart(2, '0');
-    setSelectedDate(`${yyyy}-${mm}-${dd}`);
-  };
-
-  // 复制特定字段
   const copyToClipboard = async (text: string, fieldName: string) => {
     const copied = await copyTextToClipboard(text);
     if (!copied) {
@@ -967,26 +293,52 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     setTimeout(() => setCopiedField(null), 1500);
   };
 
-  // 复制所有字段（导出格式）
   const copyAllFieldsText = () => {
     const text = `日志名称：${title}\n工时(h)：${hours}\n日志日期：${selectedDate}\n部门协作：${cooperation ? '是' : '否'}\n工作难点：${difficulty ? '是' : '否'}\n日志内容：\n${content}`;
     copyToClipboard(text, 'all');
   };
 
-  // 保存到本地数据库
+  const copyPromptAndOpenDoubao = async (
+    prompt: string,
+    successMessage: string,
+    blockedMessage: string,
+  ) => {
+    const copyResult = copyTextToClipboard(prompt);
+    const newWindow = window.open(DOUBAO_CHAT_URL, '_blank');
+    const copied = await copyResult;
+
+    if (newWindow) {
+      showToast(copied ? successMessage : '已打开豆包新对话，请手动复制右侧 Prompt 后粘贴。', copied ? 'success' : 'info');
+    } else {
+      showToast(copied ? blockedMessage : '浏览器拦截了豆包窗口，请手动复制右侧 Prompt 后打开豆包。', 'info');
+    }
+    return copied;
+  };
+
+  const handleCopyPromptAndOpenDoubao = async (fieldName: string) => {
+    const copied = await copyPromptAndOpenDoubao(
+      content,
+      'Prompt 已复制，并已打开豆包新对话，请粘贴后发送。',
+      'Prompt 已复制；豆包窗口被拦截，请手动打开豆包粘贴。'
+    );
+    if (copied) {
+      setCopiedField(fieldName);
+      setTimeout(() => setCopiedField(null), 1500);
+    }
+  };
+
   const handleSave = async () => {
     if (!title.trim() || !content.trim()) {
       showToast('日志名称和内容不能为空！', 'error');
       return;
     }
 
-    // 🔴 相似度硬拦截安全机制
     if (maxSimilarity >= appData.settings.similarityThreshold) {
       const confirmSave = window.confirm(
         `⚠️ 考勤高危警告：\n\n当前日志内容与 [${similarDate}] 的历史日志相似度高达 ${maxSimilarity}%！\n这已超过了您在配置中设定的高危报警线 (${appData.settings.similarityThreshold}%)。\n\n如果直接提交，极易被公司考勤抽查判定为“敷衍、抄袭或重复填报”而导致扣绩效分。\n\n您确定要强行保存吗？`
       );
       if (!confirmSave) {
-        return; // 用户取消，中断保存，留在编辑状态方便修改
+        return;
       }
     }
 
@@ -997,9 +349,9 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       cooperation,
       difficulty,
       content: content.trim(),
-      job,  // 使用实时自适应选择的岗位
+      job,
       customJobName: customJobName.trim(),
-      tone, // 使用实时自适应选择的语气
+      tone,
       isAutoGenerated: mode !== 'task'
     };
 
@@ -1022,10 +374,10 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   };
 
   const simLevel = getSimilarityLevel(maxSimilarity, appData.settings.similarityThreshold);
+  const isOpenRouterApi = isOpenRouterApiUrl(aiSettings.aiApiUrl);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
-      {/* 注入旋转 spin 动画和流光 shimmer 骨架屏动画的关键帧样式声明 */}
       <style dangerouslySetInnerHTML={{ __html: `
         @keyframes spin {
           0% { transform: rotate(0deg); }
@@ -1036,7 +388,6 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           100% { background-position: 200% 0; }
         }
       `}} />
-      {/* 头部区域 */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h2 style={{ fontSize: '24px', fontWeight: '800' }}>智能日报生成器</h2>
@@ -1047,1073 +398,85 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       </div>
 
       <div className="two-col-layout">
-        {/* 左侧：输入与控制面板 */}
-        <div
-          className="glass-panel two-col-left"
-          style={{
-            padding: '24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '20px'
-          }}
-        >
-          {/* AI 激活横幅，如果当前用户的 settings 里未配置 Key 则进行强力引导 */}
-          {!aiSettings.aiApiKey && (
-            <div 
-              style={{
-                background: 'linear-gradient(135deg, rgba(245, 158, 11, 0.06) 0%, rgba(99, 102, 241, 0.06) 100%)',
-                border: '1px solid rgba(245, 158, 11, 0.2)',
-                borderRadius: '10px',
-                padding: '14px',
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '10px',
-                fontSize: '11px',
-                color: '#EAB308',
-                lineHeight: '1.5'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '700' }}>
-                <span>💡</span>
-                <span>AI 大模型功能激活指引</span>
-              </div>
-              <p style={{ color: 'var(--text-secondary)', margin: 0 }}>
-                检测到您尚未配置 API 密钥。若要开启智能生成日报功能，请优先做以下配置：
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', paddingLeft: '4px' }}>
-                <a 
-                  href="https://openrouter.ai/workspaces/default/keys" 
-                  target="_blank" 
-                  rel="noreferrer"
-                  style={{ color: '#60A5FA', textDecoration: 'underline', fontWeight: '600' }}
-                >
-                  🔑 第一步：直达获取 OpenRouter API 密钥 (Keys)
-                </a>
-                <a 
-                  href="https://openrouter.ai/models?max_price=0&output_modalities=text" 
-                  target="_blank" 
-                  rel="noreferrer"
-                  style={{ color: '#34D399', textDecoration: 'underline', fontWeight: '600' }}
-                >
-                  🔍 第二步：查阅 OpenRouter 平台的免费模型列表
-                </a>
-              </div>
-              {onNavigateToTab && (
-                <button
-                  onClick={() => onNavigateToTab('settings')}
-                  className="clickable"
-                  style={{
-                    alignSelf: 'flex-start',
-                    padding: '5px 10px',
-                    borderRadius: '6px',
-                    background: 'rgba(245, 158, 11, 0.15)',
-                    border: '1px solid rgba(245, 158, 11, 0.3)',
-                    color: '#F59E0B',
-                    fontWeight: '600',
-                    fontSize: '10px',
-                    cursor: 'pointer',
-                    marginTop: '2px'
-                  }}
-                >
-                  ➡️ 一键前往【个性化配置】配置 API Key
-                </button>
-              )}
-            </div>
-          )}
-
-          {/* 1. 日期选择 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>选择日志日期</label>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <input
-                type="date"
-                value={selectedDate}
-                onChange={(e) => setSelectedDate(e.target.value)}
-                style={{ flex: 1 }}
-              />
-              <button onClick={() => setQuickDate(0)} className="clickable" style={{ padding: '0 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '12px' }}>今天</button>
-              <button onClick={() => setQuickDate(1)} className="clickable" style={{ padding: '0 12px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-primary)', fontSize: '12px' }}>昨天</button>
-            </div>
-          </div>
-
-          {/* 1.5 岗位与语气风格自适应快速切换器 (移动自设置页，保证实时生效与偏好保存) */}
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>预设岗位</label>
-              <select 
-                value={job} 
-                onChange={(e) => handleJobChange(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  borderRadius: '8px',
-                  background: 'rgba(0,0,0,0.15)',
-                  border: '1px solid var(--glass-border)',
-                  color: '#ffffff',
-                  fontSize: '12px',
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="frontend">💻 前端开发工程师</option>
-                <option value="designer">🎨 UI/UX 视觉设计师</option>
-                <option value="tester">🧪 测试工程师</option>
-                <option value="custom">✍️ 自定义岗位</option>
-              </select>
-            </div>
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>生成语气风格</label>
-              <select 
-                value={tone} 
-                onChange={(e) => handleToneChange(e.target.value)}
-                style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  borderRadius: '8px',
-                  background: 'rgba(0,0,0,0.15)',
-                  border: '1px solid var(--glass-border)',
-                  color: '#ffffff',
-                  fontSize: '12px',
-                  outline: 'none',
-                  cursor: 'pointer'
-                }}
-              >
-                <option value="professional">📋 专业严谨 (工作量饱和)</option>
-                <option value="daily">☕ 轻松日常 (流水账极自然)</option>
-              </select>
-            </div>
-          </div>
-
-          {job === 'custom' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-              <label style={{ fontSize: '12px', fontWeight: '600', color: 'var(--text-secondary)' }}>自定义岗位名称</label>
-              <input
-                type="text"
-                value={customJobName}
-                onChange={(e) => setCustomJobName(e.target.value)}
-                onBlur={handleCustomJobNameBlur}
-                placeholder="例如：产品经理、运营、后端开发工程师"
-                style={{
-                  width: '100%',
-                  padding: '8px 10px',
-                  borderRadius: '8px',
-                  background: 'rgba(0,0,0,0.15)',
-                  border: '1px solid var(--glass-border)',
-                  color: '#ffffff',
-                  fontSize: '12px',
-                  outline: 'none'
-                }}
-              />
-              <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                当前生成岗位：{getJobDisplayName(job, customJobName)}
-              </span>
-            </div>
-          )}
-
-          {/* 2. 工作状态/模式选择 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-            <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>选择今天的工作状态</label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', background: 'rgba(0,0,0,0.1)', padding: '4px', borderRadius: '10px' }}>
-              <button
-                onClick={() => setMode('task')}
-                style={{
-                  padding: '8px',
-                  borderRadius: '8px',
-                  background: mode === 'task' ? 'var(--accent-gradient)' : 'transparent',
-                  color: mode === 'task' ? '#fff' : 'var(--text-secondary)',
-                  fontSize: '12px',
-                  fontWeight: mode === 'task' ? '600' : '400'
-                }}
-              >
-                🚀 正常有任务
-              </button>
-              <button
-                onClick={() => setMode('idle')}
-                style={{
-                  padding: '8px',
-                  borderRadius: '8px',
-                  background: mode === 'idle' ? 'var(--accent-gradient)' : 'transparent',
-                  color: mode === 'idle' ? '#fff' : 'var(--text-secondary)',
-                  fontSize: '12px',
-                  fontWeight: mode === 'idle' ? '600' : '400'
-                }}
-              >
-                ☕ 无任务/维护
-              </button>
-              <button
-                onClick={() => setMode('study')}
-                style={{
-                  padding: '8px',
-                  borderRadius: '8px',
-                  background: mode === 'study' ? 'var(--accent-gradient)' : 'transparent',
-                  color: mode === 'study' ? '#fff' : 'var(--text-secondary)',
-                  fontSize: '12px',
-                  fontWeight: mode === 'study' ? '600' : '400'
-                }}
-              >
-                📖 学习与预研
-              </button>
-              <button
-                onClick={() => setMode('ai_prompt')}
-                style={{
-                  padding: '8px',
-                  borderRadius: '8px',
-                  background: mode === 'ai_prompt' ? 'var(--accent-gradient)' : 'transparent',
-                  color: mode === 'ai_prompt' ? '#fff' : 'var(--text-secondary)',
-                  fontSize: '12px',
-                  fontWeight: mode === 'ai_prompt' ? '600' : '400'
-                }}
-              >
-                🤖 豆包提示词
-              </button>
-            </div>
-          </div>
-
-          {/* 3. 简短任务输入 */}
-          {mode === 'task' || mode === 'ai_prompt' ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-              <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>
-                {mode === 'ai_prompt' ? '输入你想让豆包润色的任务' : '输入今日核心任务 (用逗号或换行分隔)'}
-              </label>
-              <textarea
-                placeholder={mode === 'ai_prompt' ? "例如：写完了用户登录页面，顺便修了修老机型兼容问题" : "例如：对接登录页面接口，修复导航栏错位bug"}
-                value={userInput}
-                onChange={(e) => setUserInput(e.target.value)}
-                style={{
-                  flex: 1,
-                  resize: 'none',
-                  minHeight: '120px',
-                  lineHeight: '1.6'
-                }}
-              />
-            </div>
-          ) : (
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '2px dashed var(--glass-border)',
-                borderRadius: '12px',
-                padding: '24px',
-                textAlign: 'center',
-                color: 'var(--text-secondary)',
-                fontSize: '13px',
-                minHeight: '120px'
-              }}
-            >
-              {mode === 'idle'
-                ? '无需输入！系统将从庞大的“前端性能优化”、“代码重构”、“隐患排查”等专业库中，自动混淆拼接生成绝不重复的日报。'
-                : '无需输入！系统将自动生成关于“前端前沿技术预研”、“团队规范梳理”等高含金量的沉淀式日报。'}
-            </div>
-          )}
-
-          {/* 3.5 大模型极速切换与状态条 */}
-          <div style={{ position: 'relative', marginTop: '4px' }}>
-            <div 
-              style={{ 
-                display: 'flex', 
-                justifyContent: 'space-between', 
-                alignItems: 'center', 
-                padding: '10px 12px', 
-                borderRadius: '10px', 
-                background: 'rgba(255, 255, 255, 0.03)', 
-                border: '1px solid var(--glass-border)',
-                fontSize: '12px',
-                flexWrap: 'wrap',
-                gap: '6px'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                <span style={{ color: 'var(--text-muted)' }}>AI 模式:</span>
-                <span 
-                  style={{ 
-                    fontWeight: '600',
-                    color: aiSettings.aiEnabled ? '#10B981' : 'var(--text-secondary)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px'
-                  }}
-                >
-                  {aiSettings.aiEnabled ? (
-                    aiSettings.aiModel
-                      ? <>{aiSettings.aiModel === 'openrouter/free' ? '🟢 [备用路由]' : '🟢 🔥'} {formatSelectedModel(aiSettings.aiModel)}</>
-                      : '🟡 未选择模型'
-                  ) : '🔴 未启用大模型 (降级本地引擎)'}
-                </span>
-                {aiSettings.aiEnabled && lastRouteInfo && formatRouteLabel(lastRouteInfo) && (
-                  <span
-                    title={formatRouteTitle(lastRouteInfo)}
-                    style={{
-                      fontSize: '11px',
-                      fontWeight: 600,
-                      color: lastRouteInfo.status === 'error' ? '#F59E0B' : '#60A5FA',
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      background: lastRouteInfo.status === 'error' ? 'rgba(245, 158, 11, 0.12)' : 'rgba(96, 165, 250, 0.12)',
-                      border: '1px solid ' + (lastRouteInfo.status === 'error' ? 'rgba(245, 158, 11, 0.25)' : 'rgba(96, 165, 250, 0.25)'),
-                      wordBreak: 'break-all'
-                    }}
-                  >
-                    实际: {formatRouteLabel(lastRouteInfo)}
-                    {lastRouteInfo.status === 'error' ? '（失败）' : ''}
-                    {lastRouteInfo.retryAfterSeconds ? ` · ${lastRouteInfo.retryAfterSeconds}s 后重试` : ''}
-                  </span>
-                )}
-              </div>
-              {/* AI 状态行：已开启但未配置 Key 时显示警告，否则展示模型切换按钮 */}
-              {aiSettings.aiEnabled && !aiSettings.aiApiKey ? (
-                <div
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: '6px',
-                    padding: '4px 10px', borderRadius: '6px',
-                    background: 'rgba(239,68,68,0.08)',
-                    border: '1px solid rgba(239,68,68,0.25)',
-                    cursor: 'pointer',
-                    fontSize: '11px', color: '#EF4444', fontWeight: '600'
-                  }}
-                  onClick={() => onNavigateToTab && onNavigateToTab('settings')}
-                  title="点击前往配置 API Key"
-                >
-                  ⚠️ 未配置 API Key，点此设置
-                </div>
-              ) : aiSettings.aiEnabled && (
-                <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                  <button
-                    onClick={() => {
-                      setCompareMode((prev) => !prev);
-                      setCompareResults([]);
-                      setCompareModels((prev) => prev.length > 0 ? prev : buildDefaultCompareModels(aiSettings.aiModel, modelList, aiSettings.aiApiUrl));
-                    }}
-                    style={{
-                      padding: '3px 6px',
-                      borderRadius: '4px',
-                      background: compareMode ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      color: compareMode ? '#34D399' : 'var(--text-secondary)',
-                      border: '1px solid ' + (compareMode ? 'rgba(16, 185, 129, 0.4)' : 'transparent'),
-                      fontSize: '10px',
-                      cursor: 'pointer'
-                    }}
-                    title="一次选择最多 3 个模型，同时生成候选后手动采用"
-                  >
-                    对比{compareMode ? ` ${compareModels.length}/3` : ''}
-                  </button>
-                  {isOpenRouterApi && (
-                    <button
-                      onClick={() => compareMode ? toggleCompareModel('openrouter/free') : handleQuickChangeModel('openrouter/free')}
-                      style={{
-                        padding: '3px 6px',
-                        borderRadius: '4px',
-                        background: (compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? 'rgba(59, 130, 246, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                        color: (compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? '#60A5FA' : 'var(--text-secondary)',
-                        border: '1px solid ' + ((compareMode ? compareModels.includes('openrouter/free') : aiSettings.aiModel === 'openrouter/free') ? 'rgba(59, 130, 246, 0.4)' : 'transparent'),
-                        fontSize: '10px',
-                        cursor: 'pointer'
-                      }}
-                      title="备用自动路由：由 OpenRouter 自动分配当前可用免费模型"
-                    >
-                      备用路由
-                    </button>
-                  )}
-                  {/* 新设“更多自选”悬浮按钮，支持主页面所有大模型搜索与切换 */}
-                  <button
-                    onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                    style={{
-                      padding: '3px 6px',
-                      borderRadius: '4px',
-                      background: isDropdownOpen ? 'rgba(16, 185, 129, 0.25)' : 'rgba(255, 255, 255, 0.05)',
-                      color: isDropdownOpen ? '#34D399' : 'var(--text-secondary)',
-                      border: '1px solid ' + (isDropdownOpen ? 'rgba(16, 185, 129, 0.4)' : 'transparent'),
-                      fontSize: '10px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '2px'
-                    }}
-                  >
-                    🔍 更多模型
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {compareMode && aiSettings.aiEnabled && (
-              <div
-                style={{
-                  marginTop: '6px',
-                  display: 'flex',
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
-                  gap: '6px',
-                  fontSize: '10px',
-                  color: 'var(--text-secondary)'
-                }}
-              >
-                <span>对比模型:</span>
-                {compareModels.map((modelId) => (
-                  <button
-                    key={modelId}
-                    onClick={() => toggleCompareModel(modelId)}
-                    title="点击移除"
-                    style={{
-                      padding: '2px 6px',
-                      borderRadius: '4px',
-                      border: '1px solid rgba(96, 165, 250, 0.25)',
-                      background: 'rgba(96, 165, 250, 0.1)',
-                      color: '#93C5FD',
-                      fontSize: '10px',
-                      cursor: compareModels.length > 1 ? 'pointer' : 'default',
-                      maxWidth: '180px',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap'
-                    }}
-                  >
-                    {formatSelectedModel(modelId)}
-                  </button>
-                ))}
-                <span style={{ color: 'var(--text-muted)' }}>最多 3 个</span>
-              </div>
-            )}
-
-            {/* 主界面多模型检索切换悬浮卡片 */}
-            {isDropdownOpen && aiSettings.aiEnabled && (
-              <div 
-                style={{
-                  position: 'absolute',
-                  bottom: '100%',
-                  right: '10px',
-                  marginBottom: '6px',
-                  width: '280px',
-                  borderRadius: '10px',
-                  background: 'rgba(21, 28, 44, 0.97)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255, 255, 255, 0.15)',
-                  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
-                  padding: '8px',
-                  zIndex: 999
-                }}
-              >
-                <input 
-                  type="text"
-                  placeholder="搜索已同步的所有模型..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  onClick={(e) => e.stopPropagation()}
-                  style={{
-                    width: '100%',
-                    padding: '6px 10px',
-                    borderRadius: '6px',
-                    background: 'rgba(0,0,0,0.2)',
-                    border: '1px solid var(--glass-border)',
-                    color: '#ffffff',
-                    fontSize: '11px',
-                    outline: 'none',
-                    marginBottom: '4px'
-                  }}
-                />
-                <div 
-                  style={{
-                    maxHeight: '160px',
-                    overflowY: 'auto',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: '4px'
-                  }}
-                >
-                  {(() => {
-                    const getModelWeight = (m: { id: string; name: string; isFree: boolean }) => {
-                      const isRec = checkIsRecommended(m);
-                      if (m.isFree && isRec) return 4;
-                      if (m.isFree) return 3;
-                      if (isRec) return 2;
-                      return 1;
-                    };
-
-                    const filtered = modelList
-                      .filter(m => 
-                        m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                        m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        (searchQuery.toLowerCase() === 'free' && m.isFree)
-                      )
-                      .sort((a, b) => getModelWeight(b) - getModelWeight(a));
-
-                    return filtered.length > 0 ? (
-                      filtered.map((m) => {
-                        const isRec = checkIsRecommended(m);
-                        const isAuto = m.id.toLowerCase().includes('openrouter/free');
-                        const isSelected = compareMode ? compareModels.includes(m.id) : aiSettings.aiModel === m.id;
-                        return (
-                          <div
-                            key={m.id}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              if (compareMode) {
-                                toggleCompareModel(m.id);
-                              } else {
-                                handleQuickChangeModel(m.id);
-                                setIsDropdownOpen(false);
-                                setSearchQuery('');
-                              }
-                            }}
-                            className="clickable"
-                            style={{
-                              padding: '6px 8px',
-                              borderRadius: '6px',
-                              background: isSelected ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                              border: isSelected ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
-                              fontSize: '11px',
-                              display: 'flex',
-                              justifyContent: 'space-between',
-                              alignItems: 'center',
-                              cursor: 'pointer',
-                              color: isSelected ? '#ffffff' : 'var(--text-secondary)'
-                            }}
-                          >
-                            <span style={{ fontWeight: isSelected ? '700' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '170px' }}>
-                              {isAuto ? '[备用] ' : (isRec ? '🔥 ' : '')}{m.name}
-                            </span>
-                            <div style={{ display: 'flex', gap: '3px', alignItems: 'center' }}>
-                              {compareMode && isSelected && (
-                                <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: 'rgba(96, 165, 250, 0.18)', color: '#60A5FA', fontWeight: '700' }}>
-                                  已选
-                                </span>
-                              )}
-                              {isAuto && (
-                                <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: 'rgba(59, 130, 246, 0.15)', color: '#3B82F6', fontWeight: '700' }}>
-                                  首选
-                                </span>
-                              )}
-                              {isRec && !isAuto && (
-                                <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: 'rgba(245, 158, 11, 0.15)', color: '#F59E0B', fontWeight: '700' }}>
-                                  推荐
-                                </span>
-                              )}
-                              <span style={{ fontSize: '8px', padding: '0px 3px', borderRadius: '2px', background: m.isFree ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)', color: m.isFree ? '#10B981' : '#EF4444', fontWeight: '700' }}>
-                                {m.isFree ? '免费' : '付费'}
-                              </span>
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div style={{ padding: '10px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '10px' }}>
-                        无匹配模型
-                      </div>
-                    );
-                  })()}
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* 4. 触发生成按钮 */}
-          <button
-            onClick={handleGenerate}
-            disabled={saveStatus === 'saving'}
-            className="clickable"
-            style={{
-              width: '100%',
-              padding: '12px',
-              borderRadius: '10px',
-              background: saveStatus === 'saving' ? 'rgba(79, 70, 229, 0.4)' : 'var(--accent-gradient)',
-              color: '#ffffff',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '8px',
-              fontSize: '14px',
-              fontWeight: '600',
-              boxShadow: saveStatus === 'saving' ? 'none' : '0 4px 14px rgba(79, 70, 229, 0.3)',
-              cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {saveStatus === 'saving' ? (
-              <RefreshCw 
-                size={16} 
-                style={{ 
-                  animation: 'spin 1.2s linear infinite' 
-                }} 
-              />
-            ) : (
-              <Sparkles size={16} />
-            )}
-            <span>
-              {saveStatus === 'saving' 
-                ? (compareMode ? '🧪 多模型正在对比中...' : '🤖 大模型正在撰写中...')
-                : (mode === 'ai_prompt' ? '一键生成豆包 Prompt' : (compareMode ? '多模型对比生成' : '智能生成今日日报'))
-              }
-            </span>
-          </button>
-
-          {/* 5. 豆包专属快捷栏 */}
-          {mode === 'ai_prompt' && content.trim() && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-              <button
-                onClick={() => handleCopyPromptAndOpenDoubao('ai_prompt_btn')}
-                className="clickable"
-                style={{
-                  width: '100%',
-                  padding: '13px',
-                  borderRadius: '8px',
-                  background: 'linear-gradient(135deg, #22C55E 0%, #2563EB 100%)',
-                  border: '1px solid rgba(147, 197, 253, 0.55)',
-                  color: '#ffffff',
-                  fontSize: '13px',
-                  fontWeight: '800',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  boxShadow: '0 10px 24px rgba(37, 99, 235, 0.28)'
-                }}
-              >
-                {copiedField === 'ai_prompt_btn' ? <Check size={16} color="#ffffff" /> : <Copy size={16} />}
-                <span>{copiedField === 'ai_prompt_btn' ? '已复制，正在打开豆包' : '复制 Prompt 并打开豆包'}</span>
-              </button>
-            </div>
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }} className="two-col-left">
+          <InputPanel
+            selectedDate={selectedDate}
+            setSelectedDate={setSelectedDate}
+            setQuickDate={setQuickDate}
+            job={job}
+            handleJobChange={handleJobChange}
+            tone={tone}
+            handleToneChange={handleToneChange}
+            customJobName={customJobName}
+            setCustomJobName={setCustomJobName}
+            handleCustomJobNameBlur={handleCustomJobNameBlur}
+            mode={mode}
+            setMode={setMode}
+            userInput={userInput}
+            setUserInput={setUserInput}
+            aiSettings={aiSettings}
+            generating={generating}
+            handleGenerate={handleGenerateWrapper}
+            onNavigateToTab={onNavigateToTab}
+          />
+          <AIModelControls
+            aiSettings={aiSettings}
+            lastRouteInfo={lastRouteInfo}
+            compareMode={compareMode}
+            setCompareMode={setCompareMode}
+            compareModels={compareModels}
+            setCompareModels={setCompareModels}
+            compareResults={compareResults}
+            setCompareResults={setCompareResults}
+            modelList={modelList}
+            isDropdownOpen={isDropdownOpen}
+            setIsDropdownOpen={setIsDropdownOpen}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            isOpenRouterApi={isOpenRouterApi}
+            handleQuickChangeModel={handleQuickChangeModel}
+            toggleCompareModel={toggleCompareModel}
+            buildDefaultCompareModels={(curr, list, url) => buildDefaultCompareModels(curr, list, url, DEFAULT_AI_MODEL, isOpenRouterApiUrl)}
+            formatSelectedModel={formatSelectedModel}
+            formatRouteLabel={formatRouteLabel}
+            formatRouteTitle={formatRouteTitle}
+            checkIsRecommended={checkIsRecommended}
+            onNavigateToTab={onNavigateToTab}
+          />
         </div>
 
-        {/* 右侧：生成结果与表单模拟卡片 */}
-        <div
-          className="glass-panel two-col-right"
-          style={{
-            padding: '24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '20px',
-            position: 'relative'
-          }}
-        >
-          {/* 大模型飞星流光加载遮罩层 (加载动效) */}
-          {saveStatus === 'saving' && (
-            <div style={{
-              position: 'absolute',
-              top: 0,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              background: 'rgba(15, 23, 42, 0.65)',
-              backdropFilter: 'blur(6px)',
-              borderRadius: '12px',
-              display: 'flex',
-              flexDirection: 'column',
-              alignItems: 'center',
-              justifyContent: 'center',
-              gap: '16px',
-              zIndex: 10
-            }}>
-              <Sparkles size={32} style={{ color: '#818CF8', animation: 'spin 2s linear infinite' }} />
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', width: '80%', alignItems: 'center' }}>
-                <span style={{ fontSize: '13px', color: '#E2E8F0', fontWeight: '600', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>
-                  {compareMode ? '🧪 多个模型正在生成候选，请稍候...' : '🤖 大模型正在撰写写实日报，请稍候...'}
-                </span>
-                <div style={{
-                  width: '100%',
-                  height: '6px',
-                  borderRadius: '3px',
-                  background: 'linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.05) 75%)',
-                  backgroundSize: '200% 100%',
-                  animation: 'shimmer 1.5s infinite'
-                }} />
-                <div style={{
-                  width: '80%',
-                  height: '6px',
-                  borderRadius: '3px',
-                  background: 'linear-gradient(90deg, rgba(255,255,255,0.05) 25%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.05) 75%)',
-                  backgroundSize: '200% 100%',
-                  animation: 'shimmer 1.5s infinite'
-                }} />
-              </div>
-            </div>
-          )}
-
-          {/* 表单标题模拟 */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Layers size={18} color="var(--accent-color)" />
-              <h3 style={{ fontSize: '16px', fontWeight: '700' }}>适配系统表单预览</h3>
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                onClick={copyAllFieldsText}
-                className="clickable"
-                style={{
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  background: 'rgba(255,255,255,0.05)',
-                  border: '1px solid var(--glass-border)',
-                  color: 'var(--text-primary)',
-                  fontSize: '12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-              >
-                {copiedField === 'all' ? <Check size={14} color="#10B981" /> : <Copy size={14} />}
-                <span>{copiedField === 'all' ? '已复制全部' : '复制全部字段'}</span>
-              </button>
-            </div>
-          </div>
-
-          {mode === 'ai_prompt' && content.trim() && (
-            <div
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                gap: '12px',
-                flexWrap: 'wrap',
-                padding: '12px 14px',
-                borderRadius: '8px',
-                background: 'linear-gradient(135deg, rgba(34, 197, 94, 0.18) 0%, rgba(37, 99, 235, 0.18) 100%)',
-                border: '1px solid rgba(147, 197, 253, 0.34)'
-              }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', minWidth: '220px', flex: 1 }}>
-                <span style={{ fontSize: '13px', color: '#F8FAFC', fontWeight: 800 }}>
-                  Prompt 已准备好
-                </span>
-                <span style={{ fontSize: '11px', color: '#BFDBFE', lineHeight: 1.5 }}>
-                  点击右侧按钮复制并打开豆包，进入新对话后直接粘贴发送。
-                </span>
-              </div>
-              <button
-                onClick={() => handleCopyPromptAndOpenDoubao('ai_prompt_cta')}
-                className="clickable"
-                style={{
-                  minWidth: '210px',
-                  padding: '11px 14px',
-                  borderRadius: '8px',
-                  background: 'linear-gradient(135deg, #22C55E 0%, #2563EB 100%)',
-                  border: '1px solid rgba(255, 255, 255, 0.28)',
-                  color: '#ffffff',
-                  fontSize: '13px',
-                  fontWeight: 800,
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '8px',
-                  boxShadow: '0 12px 26px rgba(37, 99, 235, 0.28)'
-                }}
-              >
-                {copiedField === 'ai_prompt_cta' ? <Check size={16} color="#ffffff" /> : <Copy size={16} />}
-                <span>{copiedField === 'ai_prompt_cta' ? '已复制，正在打开豆包' : '复制 Prompt 并打开豆包'}</span>
-              </button>
-            </div>
-          )}
-
-          {compareMode && compareResults.length > 0 && (
-            <div
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                gap: '10px',
-                padding: '12px',
-                borderRadius: '8px',
-                background: 'rgba(96, 165, 250, 0.06)',
-                border: '1px solid rgba(96, 165, 250, 0.18)'
-              }}
-            >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px' }}>
-                <div style={{ fontSize: '13px', fontWeight: 700, color: '#BFDBFE' }}>多模型候选</div>
-                <button
-                  onClick={handleGenerate}
-                  disabled={saveStatus === 'saving'}
-                  style={{
-                    padding: '4px 8px',
-                    borderRadius: '6px',
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid var(--glass-border)',
-                    color: 'var(--text-secondary)',
-                    fontSize: '11px',
-                    cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer'
-                  }}
-                >
-                  重新对比
-                </button>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '8px' }}>
-                {compareResults.map((result) => {
-                  const routeLabel = formatRouteLabel(result.routeInfo) || result.requestedModel;
-                  const isSuccess = !!result.content;
-                  return (
-                    <div
-                      key={result.id}
-                      style={{
-                        padding: '10px',
-                        borderRadius: '8px',
-                        background: isSuccess ? 'rgba(15, 23, 42, 0.55)' : 'rgba(127, 29, 29, 0.16)',
-                        border: '1px solid ' + (isSuccess ? 'rgba(96, 165, 250, 0.2)' : 'rgba(248, 113, 113, 0.25)'),
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '8px',
-                        minHeight: '170px'
-                      }}
-                    >
-                      <div title={formatRouteTitle(result.routeInfo)} style={{ fontSize: '11px', color: isSuccess ? '#93C5FD' : '#FCA5A5', fontWeight: 700, wordBreak: 'break-all' }}>
-                        {routeLabel}
-                      </div>
-                      <div style={{ fontSize: '10px', color: 'var(--text-muted)', lineHeight: 1.4, wordBreak: 'break-all' }}>
-                        请求: {result.routeInfo?.requestedModel || result.requestedModel}
-                        {result.routeInfo?.providerName ? ` · Provider: ${result.routeInfo.providerName}` : ''}
-                      </div>
-                      {isSuccess ? (
-                        <>
-                          <div style={{ fontSize: '12px', color: '#FDE68A', fontWeight: 700 }}>{result.title}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: 1.55, whiteSpace: 'pre-wrap', maxHeight: '118px', overflow: 'auto' }}>
-                            {result.content}
-                          </div>
-                          <button
-                            onClick={() => applyCompareResult(result)}
-                            style={{
-                              marginTop: 'auto',
-                              padding: '6px 8px',
-                              borderRadius: '6px',
-                              background: 'rgba(59, 130, 246, 0.22)',
-                              border: '1px solid rgba(59, 130, 246, 0.35)',
-                              color: '#BFDBFE',
-                              fontSize: '11px',
-                              fontWeight: 700,
-                              cursor: 'pointer'
-                            }}
-                          >
-                            采用这版
-                          </button>
-                        </>
-                      ) : (
-                        <div style={{ fontSize: '11px', color: '#FCA5A5', lineHeight: 1.5, wordBreak: 'break-word' }}>
-                          {result.error || '模型请求失败'}
-                          {result.routeInfo?.retryAfterSeconds ? `（${result.routeInfo.retryAfterSeconds}s 后可重试）` : ''}
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
-
-          {/* 表单字段区 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', flex: 1 }}>
-            {/* 1. 日志名称 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <label style={{ width: '90px', fontSize: '13px', fontWeight: '600', color: '#EAB308', textAlign: 'right' }}>日志名称:</label>
-              <div style={{ flex: 1, display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <input
-                  type="text"
-                  maxLength={30}
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="自动生成，最长30字"
-                  style={{ flex: 1 }}
-                />
-                <button
-                  onClick={() => copyToClipboard(title, 'title')}
-                  className="clickable"
-                  style={{ padding: '10px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-secondary)' }}
-                  title="单独复制日志名称"
-                >
-                  {copiedField === 'title' ? <Check size={14} color="#10B981" /> : <Copy size={14} />}
-                </button>
-              </div>
-            </div>
-
-            {/* 2. 工时 与 日期 */}
-            <div className="form-row-wrap">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
-                <label style={{ width: '90px', fontSize: '13px', fontWeight: '600', color: '#EAB308', textAlign: 'right' }}>工时(h):</label>
-                <input
-                  type="number"
-                  min={1}
-                  max={24}
-                  value={hours}
-                  onChange={(e) => setHours(Number(e.target.value))}
-                  style={{ flex: 1 }}
-                />
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flex: 1 }}>
-                <label style={{ width: '90px', fontSize: '13px', fontWeight: '600', color: '#EAB308', textAlign: 'right' }}>日志日期:</label>
-                <input
-                  type="text"
-                  value={selectedDate}
-                  disabled
-                  style={{ flex: 1, background: 'rgba(0,0,0,0.1)', cursor: 'not-allowed', color: 'var(--text-secondary)' }}
-                />
-              </div>
-            </div>
-
-            {/* 3. 部门协作 与 工作难点 */}
-            <div className="checkbox-row" style={{ paddingLeft: '4px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="checkbox"
-                  id="cooperation"
-                  checked={cooperation}
-                  onChange={(e) => setCooperation(e.target.checked)}
-                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                />
-                <label htmlFor="cooperation" style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer' }}>部门协作 (是/否)</label>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <input
-                  type="checkbox"
-                  id="difficulty"
-                  checked={difficulty}
-                  onChange={(e) => setDifficulty(e.target.checked)}
-                  style={{ width: '16px', height: '16px', cursor: 'pointer' }}
-                />
-                <label htmlFor="difficulty" style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-primary)', cursor: 'pointer' }}>工作难点 (是/否)</label>
-              </div>
-            </div>
-
-            {/* 4. 日志内容 */}
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: '12px', flex: 1 }}>
-              <label style={{ width: '90px', fontSize: '13px', fontWeight: '600', color: '#EAB308', textAlign: 'right', marginTop: '8px' }}>日志内容:</label>
-              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', height: '100%', minHeight: '220px' }}>
-                <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
-                  <textarea
-                    maxLength={3000}
-                    value={content}
-                    onChange={(e) => setContent(e.target.value)}
-                    placeholder="请填写日志内容，最长3000字"
-                    style={{
-                      flex: 1,
-                      resize: 'none',
-                      lineHeight: '1.6',
-                      minHeight: '200px'
-                    }}
-                  />
-                  <button
-                    onClick={() => copyToClipboard(content, 'content')}
-                    className="clickable"
-                    style={{
-                      position: 'absolute',
-                      right: '12px',
-                      top: '12px',
-                      padding: '8px',
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      border: '1px solid var(--glass-border)',
-                      borderRadius: '8px',
-                      color: '#ffffff',
-                      backdropFilter: 'blur(4px)'
-                    }}
-                    title="单独复制日志内容"
-                  >
-                    {copiedField === 'content' ? <Check size={14} color="#10B981" /> : <Copy size={14} />}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* 查重提示与底栏控制 */}
-          <div
-            style={{
-              borderTop: '1px solid var(--glass-border)',
-              paddingTop: '16px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '12px'
-            }}
-          >
-            {/* 相似度状态 */}
-            {content ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <div
-                  style={{
-                    width: '10px',
-                    height: '10px',
-                    borderRadius: '50%',
-                    background: simLevel.color,
-                    boxShadow: `0 0 8px ${simLevel.color}`
-                  }}
-                />
-                <div style={{ fontSize: '12px' }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>最近30天最大相似度: </span>
-                  <span style={{ fontWeight: '700', color: simLevel.color }}>{maxSimilarity}%</span>
-                  <span style={{ color: 'var(--text-muted)', marginLeft: '6px' }}>({simLevel.text})</span>
-                  {maxSimilarity > 0 && (
-                    <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                      最相似日期: {similarDate}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div style={{ fontSize: '12px', color: 'var(--text-muted)' }}>暂无生成内容，请在左侧点击生成。</div>
-            )}
-
-            {/* 控制按钮组 */}
-            <div style={{ display: 'flex', gap: '8px' }}>
-              {/* 微调混淆 */}
-              {content && (
-                <button
-                  onClick={handleTweak}
-                  disabled={saveStatus === 'saving'}
-                  className="clickable"
-                  style={{
-                    padding: '10px 16px',
-                    borderRadius: '8px',
-                    background: 'rgba(255,255,255,0.05)',
-                    border: '1px solid var(--glass-border)',
-                    color: 'var(--text-primary)',
-                    fontSize: '13px',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer',
-                    opacity: saveStatus === 'saving' ? 0.75 : 1
-                  }}
-                  title={aiSettings.aiEnabled && aiSettings.aiApiKey ? '使用当前大模型微调内容，降低重复率' : '本地重新洗牌内容，降低重复率'}
-                >
-                  <RefreshCw size={14} style={saveStatus === 'saving' ? { animation: 'spin 1.2s linear infinite' } : undefined} />
-                  <span>{saveStatus === 'saving' ? '正在微调...' : '智能微调'}</span>
-                </button>
-              )}
-
-              {/* 保存按钮 */}
-              <button
-                onClick={handleSave}
-                className="clickable"
-                disabled={saveStatus === 'saving'}
-                style={{
-                  padding: '10px 20px',
-                  borderRadius: '8px',
-                  background: saveStatus === 'success' ? '#10B981' : 'var(--accent-gradient)',
-                  color: '#ffffff',
-                  fontSize: '13px',
-                  fontWeight: '600',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  boxShadow: '0 4px 12px rgba(79, 70, 229, 0.15)'
-                }}
-              >
-                {saveStatus === 'saving' ? (
-                  <RefreshCw size={14} style={{ animation: 'pulse-slow 1s infinite' }} />
-                ) : saveStatus === 'success' ? (
-                  <Check size={14} />
-                ) : (
-                  <Save size={14} />
-                )}
-                <span>
-                  {saveStatus === 'saving'
-                    ? '正在保存...'
-                    : saveStatus === 'success'
-                    ? '已保存到数据库'
-                    : saveStatus === 'error'
-                    ? '保存失败，已写入本地缓存'
-                    : '保存并记录'}
-                </span>
-              </button>
-            </div>
-          </div>
-        </div>
+        <PreviewPanel
+          title={title}
+          setTitle={setTitle}
+          hours={hours}
+          setHours={setHours}
+          cooperation={cooperation}
+          setCooperation={setCooperation}
+          difficulty={difficulty}
+          setDifficulty={setDifficulty}
+          content={content}
+          setContent={setContent}
+          copiedField={copiedField}
+          copyToClipboard={copyToClipboard}
+          copyAllFieldsText={copyAllFieldsText}
+          mode={mode}
+          generating={generating}
+          handleTweak={handleTweakWrapper}
+          saveStatus={saveStatus}
+          handleSave={handleSave}
+          maxSimilarity={maxSimilarity}
+          similarDate={similarDate}
+          simLevel={simLevel}
+          aiSettings={aiSettings}
+          compareMode={compareMode}
+          compareResults={compareResults}
+          applyCompareResult={applyCompareResult}
+          lastRouteInfo={lastRouteInfo}
+          handleCopyPromptAndOpenDoubao={handleCopyPromptAndOpenDoubao}
+          handleGenerate={handleGenerateWrapper}
+          formatRouteLabel={formatRouteLabel}
+          formatRouteTitle={formatRouteTitle}
+        />
       </div>
     </div>
   );

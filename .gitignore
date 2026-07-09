@@ -8,3 +8,21 @@ dist
 *.njsproj
 *.sln
 *.sw?
+
+# 数据库（含敏感用户数据与 API Key）
+db.json
+
+# 环境变量
+.env
+.env.local
+.env.*.local
+
+# 日志文件
+*.log
+npm-debug.log*
+
+# 临时文件
+nul
+
+# 内部开发工具缓存
+.zcode/

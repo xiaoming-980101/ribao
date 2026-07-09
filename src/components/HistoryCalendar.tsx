@@ -467,7 +467,7 @@ export default function HistoryCalendar({
               // 网格基础背景色与边框
               let border = '1px solid var(--glass-border)';
               let background = 'rgba(255,255,255,0.01)';
-              let opacity = cell.isCurrentMonth ? 1 : 0.4;
+              const opacity = cell.isCurrentMonth ? 1 : 0.4;
               let cursor = 'pointer';
 
               if (status.isFuture) {
