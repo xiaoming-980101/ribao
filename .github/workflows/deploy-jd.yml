@@ -191,6 +191,10 @@ jobs:
           rm -rf "$release" "$archive"
           echo "Deployed $DEPLOY_SHA to $target"
           echo "Backup: $backup"
+          echo "=== 诊断：Docker 容器运行状态 ==="
+          docker ps -a | grep "$app_name" || true
+          echo "=== 诊断：Docker 容器启动日志 ==="
+          docker logs "$app_name" --tail 50 || true
           REMOTE
 
       - name: Smoke test
