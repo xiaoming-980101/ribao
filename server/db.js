@@ -73,14 +73,23 @@ export function readDB() {
 }
 
 export function writeDB(data) {
+  const tmpFile = DB_FILE + '.tmp';
   try {
-    const tmpFile = DB_FILE + '.tmp';
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
-    fs.renameSync(tmpFile, DB_FILE);
+    try {
+      fs.renameSync(tmpFile, DB_FILE);
+    } catch (renameError) {
+      if (renameError.code === 'EXDEV') {
+        fs.copyFileSync(tmpFile, DB_FILE);
+        fs.unlinkSync(tmpFile);
+      } else {
+        throw renameError;
+      }
+    }
     return true;
   } catch (error) {
     console.error('写入数据库失败:', error);
-    try { fs.unlinkSync(DB_FILE + '.tmp'); } catch (_) { /* ignore */ }
+    try { fs.unlinkSync(tmpFile); } catch (_) { /* ignore */ }
     return false;
   }
 }
