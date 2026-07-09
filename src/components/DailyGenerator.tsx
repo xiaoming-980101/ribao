@@ -446,6 +446,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         </div>
 
         <PreviewPanel
+          selectedDate={selectedDate}
           title={title}
           setTitle={setTitle}
           hours={hours}

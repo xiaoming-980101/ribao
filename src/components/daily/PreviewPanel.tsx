@@ -4,6 +4,7 @@ import { RouteInfo, CompareResult } from '../../types/ai';
 import { CompareResults } from './CompareResults';
 
 interface PreviewPanelProps {
+  selectedDate: string;
   title: string;
   setTitle: (title: string) => void;
   hours: number;
@@ -52,6 +53,7 @@ interface PreviewPanelProps {
 }
 
 export const PreviewPanel: React.FC<PreviewPanelProps> = ({
+  selectedDate,
   title,
   setTitle,
   hours,
