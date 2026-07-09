@@ -163,6 +163,9 @@ jobs:
             -v "$target/db.json:/app/db.json" \
             "${app_name}:${DEPLOY_SHA}"
 
+          echo "等待 3 秒以收集真实启动日志..."
+          sleep 3
+
           cat > "/etc/nginx/conf.d/${app_name}.conf" <<NGINX
           server {
               listen ${public_port};
