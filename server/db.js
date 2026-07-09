@@ -72,6 +72,7 @@ export function readDB() {
   }
 }
 
+// 写入数据库文件，包含 Docker 卷挂载 EXDEV 跨设备重命名安全降级
 export function writeDB(data) {
   const tmpFile = DB_FILE + '.tmp';
   try {
