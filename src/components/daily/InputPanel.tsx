@@ -328,16 +328,22 @@ export const InputPanel: React.FC<InputPanelProps> = ({
       <button
         onClick={handleGenerate}
         disabled={generating}
-        className="primary-button clickable"
+        className="clickable"
         style={{
           width: '100%',
           padding: '12px',
+          background: 'var(--accent-gradient)',
+          border: 'none',
+          borderRadius: '8px',
+          color: '#ffffff',
+          fontWeight: '700',
+          fontSize: '14px',
           display: 'flex',
           justifyContent: 'center',
           alignItems: 'center',
           gap: '8px',
-          fontWeight: '700',
-          fontSize: '14px',
+          boxShadow: '0 4px 14px rgba(79, 70, 229, 0.25)',
+          cursor: generating ? 'not-allowed' : 'pointer',
           position: 'relative',
           overflow: 'hidden'
         }}
