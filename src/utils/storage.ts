@@ -1,3 +1,5 @@
+import { enqueue, flushOfflineQueue, OfflineOp } from './offlineQueue';
+
 export interface LogEntry {
   title: string;          // 日志名称
   hours: number;          // 工时
@@ -234,12 +236,13 @@ export async function saveLog(
     console.warn('保存日志至后端失败，正在写入本地 LocalStorage 离线存储');
   }
 
-  // 降级模式：写入 LocalStorage
+  // 降级模式：写入 LocalStorage 并入队待同步
   memoryData.logs[date] = {
     ...logData,
     updatedAt: new Date().toISOString()
   };
   setLocalStorageData(memoryData);
+  enqueue({ kind: 'save_log', date, payload: { date, ...logData } });
   return { success: true, isOffline: true };
 }
 
@@ -265,6 +268,7 @@ export async function deleteLog(date: string): Promise<{ success: boolean; isOff
   if (memoryData.logs[date]) {
     delete memoryData.logs[date];
     setLocalStorageData(memoryData);
+    enqueue({ kind: 'delete_log', date });
     return { success: true, isOffline: true };
   }
   return { success: false, isOffline: true };
@@ -294,6 +298,7 @@ export async function saveSettings(
 
   memoryData.settings = { ...memoryData.settings, ...settings };
   setLocalStorageData(memoryData);
+  enqueue({ kind: 'save_settings', payload: settings });
   return { success: true, isOffline: true };
 }
 
@@ -379,7 +384,59 @@ export async function resetAllData(): Promise<{ success: boolean }> {
     }
   };
   setLocalStorageData(memoryData);
+  enqueue({ kind: 'reset' });
   return { success: true };
+}
+
+/**
+ * 同步当前用户年挂的离线操作队列（网络恢复自动回放）。
+ * 逐条执行真实服务器请求，成功后移除队列条目。
+ * 供 App 挂载时 / 网络恢复时调用。
+ */
+export async function syncOfflineOperations(): Promise<{ successCount: number; failCount: number; done: boolean }> {
+  return flushOfflineQueue(async (op) => {
+    try {
+      if (op.kind === 'reset') {
+        const res = await fetch(`${BACKEND_URL}/api/reset`, {
+          method: 'POST',
+          headers: getAuthHeaders(),
+          signal: AbortSignal.timeout(15000)
+        });
+        return res.ok;
+      }
+      if (op.kind === 'delete_log' && op.date) {
+        const res = await fetch(`${BACKEND_URL}/api/logs/${op.date}`, {
+          method: 'DELETE',
+          headers: getAuthHeaders(),
+          signal: AbortSignal.timeout(15000)
+        });
+        return res.ok;
+      }
+      if (op.kind === 'save_log' && op.date && op.payload) {
+        const payload = op.payload;
+        const res = await fetch(`${BACKEND_URL}/api/logs`, {
+          method: 'POST',
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify(payload),
+          signal: AbortSignal.timeout(15000)
+        });
+        return res.ok;
+      }
+      if (op.kind === 'save_settings' && op.payload) {
+        const res = await fetch(`${BACKEND_URL}/api/settings`, {
+          method: 'POST',
+          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+          body: JSON.stringify(op.payload),
+          signal: AbortSignal.timeout(15000)
+        });
+        return res.ok;
+      }
+      return true;
+    } catch (e) {
+      console.warn('[offlineQueue] 同步操作失败（下一轮重试）:', op.kind, op.date, e);
+      return false;
+    }
+  });
 }
 
 import { DirectionOption } from '../types/ai';

@@ -5,7 +5,7 @@ import HistoryCalendar from './components/HistoryCalendar';
 import WeeklyGenerator from './components/WeeklyGenerator';
 import Settings from './components/Settings';
 import LoginModal from './components/LoginModal';
-import { fetchAllData, AppData } from './utils/storage';
+import { fetchAllData, AppData, syncOfflineOperations } from './utils/storage';
 import { CheckCircle2, AlertTriangle, Info, Menu, PenSquare, RefreshCw } from 'lucide-react';
 
 interface ErrorBoundaryProps {
@@ -162,6 +162,37 @@ export default function App() {
   useEffect(() => {
     loadData();
 
+    // 离线队列自动同步（挂载时检测）
+    syncOfflineOperations().then(result => {
+      if (result.successCount > 0) {
+        showToast(`已同步 ${result.successCount} 条离线操作，数据已落盘`, 'success');
+      }
+    });
+
+    // 网络恢复时自动回放离线队列
+    const handleOnline = () => {
+      syncOfflineOperations().then(result => {
+        if (result.successCount > 0) {
+          showToast(`网络已恢复，已同步 ${result.successCount} 条离线操作`, 'success');
+          loadData();
+        }
+      });
+    };
+    window.addEventListener('online', handleOnline);
+
+    // 监听跨标签页同步完成事件（其他标签页完成离线回放时刷新数据）
+    try {
+      const syncChannel = new BroadcastChannel('winner-daily-sync');
+      syncChannel.onmessage = (ev) => {
+        if (ev.data && ev.data.type === 'synced') {
+          loadData();
+        }
+      };
+      (window as any).__winnerDailySyncChannel = syncChannel;
+    } catch (e) {
+      // BroadcastChannel 不支持时忽略
+    }
+
     const savedTheme = localStorage.getItem('winner_daily_theme') as 'light' | 'dark' | null;
     if (savedTheme) {
       setTheme(savedTheme);
@@ -176,7 +207,14 @@ export default function App() {
     };
     window.addEventListener('resize', handleResize);
     handleResize();
-    return () => window.removeEventListener('resize', handleResize);
+    return () => {
+      window.removeEventListener('resize', handleResize);
+      window.removeEventListener('online', handleOnline);
+      try {
+        const chan = (window as any).__winnerDailySyncChannel;
+        if (chan) chan.close();
+      } catch (e) {}
+    };
   }, []);
 
   useEffect(() => {
