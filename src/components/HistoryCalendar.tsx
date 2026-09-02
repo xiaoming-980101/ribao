@@ -14,9 +14,12 @@ import {
   FileSpreadsheet,
   X,
   Clock,
-  ArrowRight
+  ArrowRight,
+  History as HistoryIcon,
+  RotateCcw,
+  Trash
 } from 'lucide-react';
-import { AppData, deleteLog, saveLog } from '../utils/storage';
+import { AppData, deleteLog, saveLog, restoreLog, clearTrash } from '../utils/storage';
 import { generateRandomFrontendDaily } from '../utils/generator';
 import { parseExcelFile, batchSaveImportedLogs, ParsedImportDay } from '../utils/excelImporter';
 
@@ -37,6 +40,10 @@ export default function HistoryCalendar({
   const [selectedDateStr, setSelectedDateStr] = useState<string>('');
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
+  // ── 回收站与历史版本状态 ──
+  const [trashOpen, setTrashOpen] = useState(false);
+  const [showHistory, setShowHistory] = useState(false);
+
   // 补录快速表单状态
   const [quickTitle, setQuickTitle] = useState('');
   const [quickContent, setQuickContent] = useState('');
@@ -54,6 +61,7 @@ export default function HistoryCalendar({
 
   // 安全获取 logs 和 settings
   const logs = (appData && appData.logs) ? appData.logs : {};
+  const trash = (appData && appData.trash) ? appData.trash : {};
   const settings = (appData && appData.settings) ? appData.settings : {
     job: 'frontend',
     tone: 'professional',
@@ -204,15 +212,41 @@ export default function HistoryCalendar({
 
   const handleQuickDelete = async () => {
     if (!selectedDateStr) return;
-    if (confirm(`确定要删除 ${selectedDateStr} 的工作日志吗？`)) {
+    if (confirm(`确定要将 ${selectedDateStr} 的工作日志移入回收站吗？\n\n移入回收站后可在右侧「回收站」中随时恢复。`)) {
       const res = await deleteLog(selectedDateStr);
       if (res.success) {
-        showToast(`${selectedDateStr} 的工作日志已删除。`, 'info');
+        showToast(`${selectedDateStr} 的工作日志已移入回收站。`, 'info');
         onLogChange();
         setQuickTitle('');
         setQuickContent('');
+        setShowHistory(false);
       } else {
         showToast('删除失败！', 'error');
+      }
+    }
+  };
+
+  // ── 回收站操作：恢复单条 / 清空 ──
+  const handleRestoreLog = async (date: string) => {
+    const res = await restoreLog(date);
+    if (res.success) {
+      showToast(`${date} 的日志已从回收站恢复！`, 'success');
+      onLogChange();
+    } else {
+      showToast('恢复失败！', 'error');
+    }
+  };
+
+  const handleClearTrash = async () => {
+    const trashCount = Object.keys(trash || {}).length;
+    if (trashCount === 0) return;
+    if (confirm(`确定要永久清空回收站中的 ${trashCount} 条日志吗？\n\n此操作不可恢复！`)) {
+      const res = await clearTrash();
+      if (res.success) {
+        showToast('回收站已清空。', 'info');
+        onLogChange();
+      } else {
+        showToast('清空回收站失败！', 'error');
       }
     }
   };
@@ -478,6 +512,48 @@ export default function HistoryCalendar({
             <span>一键导入任务清单 (Excel)</span>
           </button>
 
+          {/* 回收站入口 */}
+          <button
+            onClick={() => setTrashOpen(true)}
+            className="clickable"
+            style={{
+              padding: '10px 18px',
+              borderRadius: '12px',
+              background: Object.keys(trash).length > 0 ? 'rgba(239, 68, 68, 0.1)' : 'var(--glass-surface-subtle)',
+              border: '1px solid ' + (Object.keys(trash).length > 0 ? 'rgba(239, 68, 68, 0.35)' : 'var(--glass-border)'),
+              color: 'var(--text-primary)',
+              fontSize: '13px',
+              fontWeight: '700',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.06)'
+            }}
+            title="查看已移入回收站（软删除）的日志，支持一键恢复"
+          >
+            <Trash2 size={16} color={Object.keys(trash).length > 0 ? '#EF4444' : 'var(--text-secondary)'} />
+            <span>回收站</span>
+            {Object.keys(trash).length > 0 && (
+              <span
+                style={{
+                  background: '#EF4444',
+                  color: '#fff',
+                  fontSize: '10px',
+                  fontWeight: '800',
+                  minWidth: '16px',
+                  height: '16px',
+                  borderRadius: '8px',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '0 4px'
+                }}
+              >
+                {Object.keys(trash).length}
+              </span>
+            )}
+          </button>
+
           <div style={{ textAlign: 'right' }}>
             <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>待归档天数</div>
             <div style={{
@@ -721,6 +797,46 @@ export default function HistoryCalendar({
                   )}
                   {logs[selectedDateStr] && (
                     <button
+                      onClick={() => setShowHistory((v) => !v)}
+                      className="clickable"
+                      style={{
+                        padding: '7px 12px',
+                        borderRadius: '10px',
+                        background: showHistory ? 'rgba(16, 185, 129, 0.12)' : 'var(--glass-surface-subtle)',
+                        border: '1px solid ' + (showHistory ? 'rgba(16, 185, 129, 0.35)' : 'var(--glass-border)'),
+                        color: showHistory ? '#10B981' : 'var(--text-secondary)',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}
+                    >
+                      <HistoryIcon size={14} />
+                      <span>历史版本</span>
+                      {(logs[selectedDateStr]?.history?.length || 0) > 0 && (
+                        <span
+                          style={{
+                            background: '#10B981',
+                            color: '#fff',
+                            fontSize: '9px',
+                            fontWeight: '800',
+                            minWidth: '14px',
+                            height: '14px',
+                            borderRadius: '7px',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '0 3px'
+                          }}
+                        >
+                          {(logs[selectedDateStr]?.history?.length || 0)}
+                        </span>
+                      )}
+                    </button>
+                  )}
+                  {logs[selectedDateStr] && (
+                    <button
                       onClick={handleQuickDelete}
                       className="clickable"
                       style={{
@@ -742,6 +858,62 @@ export default function HistoryCalendar({
                   )}
                 </div>
               </div>
+
+              {/* 历史版本面板：查看该日期日志的修改历史快照 */}
+              {showHistory &&
+                (() => {
+                  const current = logs[selectedDateStr];
+                  const historyList = current?.history ? [...current.history].reverse() : [];
+                  return (
+                    <div
+                      style={{
+                        border: '1px solid var(--glass-border)',
+                        borderRadius: '12px',
+                        padding: '14px 16px',
+                        background: 'var(--glass-surface-subtle)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px',
+                        maxHeight: '240px',
+                        overflowY: 'auto'
+                      }}
+                    >
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '800', color: 'var(--text-primary)' }}>
+                        <HistoryIcon size={13} color="#10B981" />
+                        <span>修改历史（共 {historyList.length} 个旧版本，最新在上）</span>
+                      </div>
+                      {historyList.length === 0 ? (
+                        <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>该日志暂无历史版本，之后每次覆盖保存都会在此留档一份快照。</p>
+                      ) : (
+                        historyList.map((h, idx) => (
+                          <div
+                            key={idx}
+                            style={{
+                              border: '1px solid var(--glass-border-subtle)',
+                              borderRadius: '8px',
+                              padding: '10px 12px',
+                              fontSize: '12px',
+                              background: 'var(--glass-surface-subtle)'
+                            }}
+                          >
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '8px', marginBottom: '6px' }}>
+                              <span style={{ fontWeight: '700', color: 'var(--text-primary)' }}>
+                                {h.title || '日常工作日志'}
+                              </span>
+                              <span style={{ fontSize: '11px', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                <Clock size={10} />
+                                {h.versionAt ? new Date(h.versionAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '历史快照'}
+                              </span>
+                            </div>
+                            <p style={{ whiteSpace: 'pre-wrap', lineHeight: '1.6', color: 'var(--text-secondary)' }}>
+                              {h.content}
+                            </p>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  );
+                })()}
 
               {/* 表单字段 */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1 }}>
@@ -1072,6 +1244,172 @@ export default function HistoryCalendar({
               >
                 <span>{isImporting ? '正在批量覆盖导入...' : '确认覆盖导入'}</span>
                 <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 回收站弹窗：查看已软删除日志，支持恢复 / 清空 */}
+      {trashOpen && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(16px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }}>
+          <div
+            className="liquid-glass-card"
+            style={{
+              width: '100%',
+              maxWidth: '620px',
+              padding: '28px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '18px',
+              borderRadius: '24px',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
+              maxHeight: '85vh',
+              overflow: 'hidden'
+            }}
+          >
+            {/* 头部 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  background: 'rgba(239, 68, 68, 0.9)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 12px rgba(239,68,68,0.35)'
+                }}>
+                  <Trash2 size={20} color="#fff" />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '17px', fontWeight: '800', margin: 0 }}>回收站</h3>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, marginTop: '2px' }}>
+                    软删除的日志保存在此，可随时恢复或永久清除
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setTrashOpen(false)}
+                className="clickable"
+                style={{
+                  padding: '6px',
+                  borderRadius: '8px',
+                  background: 'var(--glass-surface-subtle)',
+                  border: '1px solid var(--glass-border)',
+                  color: 'var(--text-secondary)'
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* 列表 */}
+            {Object.keys(trash).length === 0 ? (
+              <div style={{
+                padding: '40px 20px',
+                textAlign: 'center',
+                color: 'var(--text-secondary)',
+                fontSize: '13px',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '8px'
+              }}>
+                <Trash size={26} color="var(--text-muted)" />
+                <span>回收站空空如也，删除的日志会出现在这里。</span>
+              </div>
+            ) : (
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '8px', paddingRight: '4px' }}>
+                {Object.entries(trash)
+                  .sort((a, b) => (b[1].deletedAt || '').localeCompare(a[1].deletedAt || ''))
+                  .map(([date, log]) => (
+                    <div
+                      key={date}
+                      style={{
+                        padding: '10px 12px',
+                        borderRadius: '10px',
+                        background: 'var(--glass-surface-subtle)',
+                        border: '1px solid var(--glass-border-subtle)',
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: '10px',
+                        fontSize: '12px'
+                      }}
+                    >
+                      <div style={{ overflow: 'hidden', flex: 1 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <span style={{ fontWeight: '800', color: 'var(--accent-color)', flexShrink: 0 }}>{date}</span>
+                          <span style={{ fontWeight: '600', color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {log.title || '日常工作日志'}
+                          </span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: 'var(--text-muted)', fontSize: '11px', marginTop: '3px' }}>
+                          <Clock size={10} />
+                          <span>删除于 {log.deletedAt ? new Date(log.deletedAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '未知时间'}</span>
+                        </div>
+                      </div>
+                      <button
+                        onClick={() => handleRestoreLog(date)}
+                        className="clickable"
+                        style={{
+                          flexShrink: 0,
+                          padding: '7px 14px',
+                          borderRadius: '10px',
+                          background: 'rgba(16, 185, 129, 0.12)',
+                          border: '1px solid rgba(16, 185, 129, 0.35)',
+                          color: '#10B981',
+                          fontSize: '12px',
+                          fontWeight: '700',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <RotateCcw size={13} />
+                        <span>恢复</span>
+                      </button>
+                    </div>
+                  ))}
+              </div>
+            )}
+
+            {/* 底部操作 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--glass-border-subtle)', paddingTop: '16px' }}>
+              <button
+                onClick={handleClearTrash}
+                disabled={Object.keys(trash).length === 0}
+                className="clickable"
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '10px',
+                  background: 'rgba(239, 68, 68, 0.12)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  color: '#EF4444',
+                  fontSize: '13px',
+                  fontWeight: '700',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  cursor: Object.keys(trash).length === 0 ? 'not-allowed' : 'pointer',
+                  opacity: Object.keys(trash).length === 0 ? 0.5 : 1
+                }}
+              >
+                <Trash2 size={14} />
+                <span>永久清空回收站</span>
               </button>
             </div>
           </div>

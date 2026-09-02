@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest';
+// @ts-ignore
 import { parseGeneratedLog } from '../../../server/utils/aiPrompt.js';
 
 describe('parseGeneratedLog & Tweak Format Robustness Tests', () => {

@@ -17,8 +17,8 @@ const CHANNEL_NAME = 'winner-daily-sync';
 /** 离线操作条目 */
 export interface OfflineOp {
   id: string;
-  kind: 'save_log' | 'delete_log' | 'save_settings' | 'reset';
-  date?: string;         // save_log / delete_log 专属
+  kind: 'save_log' | 'delete_log' | 'restore_log' | 'save_settings' | 'save_report' | 'clear_trash' | 'reset';
+  date?: string;         // save_log / delete_log / restore_log 专属
   payload?: any;          // save_log / save_settings 数据
   createdAt: number;
 }
@@ -38,7 +38,16 @@ function broadcast(type: 'changed' | 'busy' | 'synced') {
   } catch (e) { /* 旧浏览器忽略 */ }
 }
 
+function isLocalStorageAvailable(): boolean {
+  try {
+    return typeof localStorage !== 'undefined' && typeof localStorage.getItem === 'function' && typeof localStorage.setItem === 'function';
+  } catch (e) {
+    return false;
+  }
+}
+
 function persist() {
+  if (!isLocalStorageAvailable()) return;
   try {
     localStorage.setItem(QUEUE_STORAGE_KEY, JSON.stringify(queue));
   } catch (e) {
@@ -47,6 +56,7 @@ function persist() {
 }
 
 function load() {
+  if (!isLocalStorageAvailable()) return;
   try {
     const raw = localStorage.getItem(QUEUE_STORAGE_KEY);
     if (raw) {
@@ -56,9 +66,14 @@ function load() {
   } catch (e) {
     console.warn('[offlineQueue] 加载队列失败，重置:', e);
     queue = [];
-    localStorage.removeItem(QUEUE_STORAGE_KEY);
+    try {
+      localStorage.removeItem(QUEUE_STORAGE_KEY);
+    } catch (_) {}
   }
 }
+
+// 模块加载时立即恢复持久化的离线队列
+load();
 
 function notify() {
   listeners.forEach((l) => l([...queue], busy));
@@ -119,10 +134,17 @@ export function getOfflineQueueCount(): number {
   return queue.length;
 }
 
+/** 清空离线队列（重置/测试用） */
+export function clearOfflineQueue(): void {
+  queue = [];
+  persist();
+  notify();
+}
+
 /**
  * 尝试回放整个离线队列。
- * 逐条调用 enqueue 传回的 sync 回调（实际进行服务器请求）；
- * 全部成功后清空队列。
+ * 逐条调用 syncOne 传回的 sync 回调（实际进行服务器请求）；
+ * 保持严格 FIFO 顺序，若网络中断或失败则安全保留剩余队列。
  * @returns 成功处理条数
  */
 export async function flushOfflineQueue(
@@ -136,32 +158,39 @@ export async function flushOfflineQueue(
   let successCount = 0;
   let failCount = 0;
 
-  // 逐条快照处理；先复制后清空标记（若中途失败再回填）
+  // 逐条快照处理
   const pending = [...queue];
   queue = [];
   persist();
 
-  for (const op of pending) {
+  const remaining: OfflineOp[] = [];
+
+  for (let i = 0; i < pending.length; i++) {
+    const op = pending[i];
     try {
       const ok = await syncOne(op);
       if (ok) {
         successCount++;
       } else {
         failCount++;
-        queue.unshift(op);   // 放回队首等待下次
+        // 当前失败项及后续未执行项按原顺序保留，中断本次回放
+        remaining.push(...pending.slice(i));
+        break;
       }
     } catch (e) {
       console.warn('[offlineQueue] 同步单条操作失败:', op.kind, op.date, e);
       failCount++;
-      queue.unshift(op);
+      remaining.push(...pending.slice(i));
+      break;
     }
   }
 
+  // 将未完成的剩余项与同步过程中新入队的操作合并（保持 FIFO）
+  queue = [...remaining, ...queue];
+
   if (queue.length > 0) {
-    // 有失败，保留剩余队列
     persist();
   } else {
-    // 全部成功，清空
     persist();
     broadcast('synced');
   }

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { RouteInfo, CompareResult, DirectionOption } from '../types/ai';
 import {
   ModelOption,
@@ -6,11 +6,13 @@ import {
   getUserAISettings,
   saveUserAISettings,
   loadCachedModels,
+  saveCachedModels,
   saveSettings,
   isOpenRouterApiUrl,
   DEFAULT_AI_API_URL,
   DEFAULT_AI_MODEL,
-  fetchAIDirections
+  fetchAIDirections,
+  getCurrentUser
 } from '../utils/storage';
 import {
   normalizeModelId,
@@ -76,6 +78,30 @@ export function useAIGeneration({
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [generating, setGenerating] = useState<boolean>(false);
+
+  // ── 请求取消与防重入（AbortController + generatingRef）──
+  const activeAbortRef = useRef<AbortController | null>(null);
+  const generatingRef = useRef<boolean>(false);
+
+  // 组件卸载时取消所有进行中的生成请求
+  useEffect(() => {
+    return () => {
+      activeAbortRef.current?.abort();
+    };
+  }, []);
+
+  // 发起新一轮生成前，先取消旧请求
+  const beginGenerationSignal = useCallback(() => {
+    activeAbortRef.current?.abort();
+    const ctrl = new AbortController();
+    activeAbortRef.current = ctrl;
+    return ctrl.signal;
+  }, []);
+
+  // 供外部（如切换模型/页面）主动取消当前生成
+  const cancelGenerate = useCallback(() => {
+    activeAbortRef.current?.abort();
+  }, []);
 
   // ── 方向罗盘状态 ──
   const [directions, setDirections] = useState<DirectionOption[]>([]);
@@ -202,6 +228,8 @@ export function useAIGeneration({
   };
 
   const handleQuickChangeModel = async (newModel: string) => {
+    // 切换模型时取消进行中的生成请求，避免旧请求覆盖新选择
+    cancelGenerate();
     const normalizedModel = normalizeModelId(newModel, aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl);
     const nextSettings = { ...aiSettings, aiModel: normalizedModel };
     setAiSettings(nextSettings);
@@ -265,7 +293,7 @@ export function useAIGeneration({
     }
     showToast('正在从大模型上游同步支持的模型列表...', 'info');
     try {
-      const user = localStorage.getItem('winner_daily_user') || 'admin';
+      const user = getCurrentUser();
       const res = await fetch(`${BACKEND_URL}/api/ai/models`, {
         method: 'POST',
         headers: {
@@ -292,8 +320,8 @@ export function useAIGeneration({
     }
   };
 
-  const requestGenerate = async (targetModel: string, overrides: any = {}) => {
-    const user = localStorage.getItem('winner_daily_user') || 'admin';
+  const requestGenerate = async (targetModel: string, overrides: any = {}, signal?: AbortSignal) => {
+    const user = getCurrentUser();
     const historyLogs = Object.entries(appData.logs || {})
       .sort(([a], [b]) => b.localeCompare(a))
       .slice(0, 10)
@@ -325,6 +353,14 @@ export function useAIGeneration({
       ...overrides
     };
 
+    // 合并外部取消信号与 180s 超时信号
+    const timeoutSignal = AbortSignal.timeout(180000);
+    const combinedSignal = signal
+      ? (typeof AbortSignal.any === 'function'
+        ? AbortSignal.any([signal, timeoutSignal])
+        : signal) // 老环境无 AbortSignal.any 时退回仅外部信号
+      : timeoutSignal;
+
     const res = await fetch(`${BACKEND_URL}/api/ai/generate`, {
       method: 'POST',
       headers: {
@@ -332,7 +368,7 @@ export function useAIGeneration({
         'X-User-Name': user
       },
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(180000)
+      signal: combinedSignal
     });
 
     const resText = await res.text();
@@ -355,6 +391,12 @@ export function useAIGeneration({
   };
 
   const handleGenerate = async (overrides: any = {}) => {
+    // 防重入：上一次生成仍在进行时忽略本次触发（Ctrl+Enter 连按、双击等场景）
+    if (generatingRef.current) {
+      showToast('上一次生成仍在进行中，请稍候…', 'info');
+      return;
+    }
+
     if (mode === 'ai_prompt') {
       // 豆包提示词生成
       const effectiveInput = userInput.trim() || (selectedDirection ? `${selectedDirection.title}：${selectedDirection.summary}` : '');
@@ -400,6 +442,8 @@ export function useAIGeneration({
         showToast('请至少选择一个模型进行对比！', 'error');
         return;
       }
+      generatingRef.current = true;
+      const runSignal = beginGenerationSignal();
       setGenerating(true);
       setCompareResults([]);
       showToast(`正在并行调用 ${compareModels.length} 个大模型生成对比结果...`, 'info');
@@ -407,7 +451,8 @@ export function useAIGeneration({
       try {
         const promises = compareModels.map(async (modelId) => {
           try {
-            const resData = await requestGenerate(modelId, overrides);
+            const resData = await requestGenerate(modelId, overrides, runSignal);
+            if (runSignal.aborted) return { id: modelId, requestedModel: modelId, aborted: true } as any;
             return {
               id: modelId,
               requestedModel: modelId,
@@ -416,6 +461,9 @@ export function useAIGeneration({
               routeInfo: resData.routeInfo ? { ...resData.routeInfo, status: 'success' } : { requestedModel: modelId, actualModel: modelId, status: 'success' }
             } as CompareResult;
           } catch (err: any) {
+            if (runSignal.aborted || err?.name === 'AbortError') {
+              return { id: modelId, requestedModel: modelId, aborted: true } as any;
+            }
             return {
               id: modelId,
               requestedModel: modelId,
@@ -426,19 +474,24 @@ export function useAIGeneration({
         });
 
         const results = await Promise.all(promises);
-        setCompareResults(results);
+        if (runSignal.aborted) return;   // 本轮已被取消（切换模型/卸载），丢弃过期结果
+        const validResults = results.filter((r: any) => !r.aborted);
+        setCompareResults(validResults);
 
-        const successCount = results.filter((r) => !r.error && r.content).length;
+        const successCount = validResults.filter((r: any) => !r.error && r.content).length;
         if (successCount > 0) {
-          showToast(`多方案比对完成：成功 ${successCount} 个，失败 ${results.length - successCount} 个`, 'success');
+          showToast(`多方案比对完成：成功 ${successCount} 个，失败 ${validResults.length - successCount} 个`, 'success');
         } else {
           showToast('所有对比模型请求均未成功，请检查网络或 API 密钥', 'error');
         }
       } finally {
+        generatingRef.current = false;
         setGenerating(false);
       }
     } else {
       // 单模型生成 + 自动重试降级链
+      generatingRef.current = true;
+      const runSignal = beginGenerationSignal();
       setGenerating(true);
       try {
         const fallbackQueue = buildFallbackQueue(aiSettings.aiModel, modelList, aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl);
@@ -453,10 +506,11 @@ export function useAIGeneration({
         for (let attemptIndex = 0; attemptIndex < fallbackQueue.length; attemptIndex++) {
           const modelToTry = fallbackQueue[attemptIndex];
           try {
-            if (attemptIndex > 0) {
+            if (attemptIndex > 0 && !runSignal.aborted) {
               showToast(`正在切换到降级模型 [${formatSelectedModel(modelToTry)}] 重试生成...`, 'info');
             }
-            const resData = await requestGenerate(modelToTry, overrides);
+            const resData = await requestGenerate(modelToTry, overrides, runSignal);
+            if (runSignal.aborted) return;    // 本轮已被取消，丢弃结果
             if (resData.success && resData.content) {
               setTitle(resData.title || '日常日志');
               setHours(8);
@@ -477,6 +531,7 @@ export function useAIGeneration({
               break;
             }
           } catch (error: any) {
+            if (runSignal.aborted || error?.name === 'AbortError') return;   // 用户取消/切换模型，静默退出
             lastError = error;
             const routeInfo: RouteInfo = error.routeInfo
               ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
@@ -488,10 +543,11 @@ export function useAIGeneration({
           }
         }
 
-        if (lastError) {
+        if (lastError && !runSignal.aborted) {
           showToast(`生成失败：${lastError.message || '全部降级模型均不可用'}`, 'error');
         }
       } finally {
+        generatingRef.current = false;
         setGenerating(false);
       }
     }
@@ -503,7 +559,9 @@ export function useAIGeneration({
     compareMode,
     setCompareMode,
     compareModels,
+    setCompareModels,
     compareResults,
+    setCompareResults,
     modelList,
     isDropdownOpen,
     setIsDropdownOpen,
@@ -514,6 +572,7 @@ export function useAIGeneration({
     toggleCompareModel,
     applyCompareResult,
     refreshAvailableModels,
+    cancelGenerate,
     handleGenerate,
     
     // 方向罗盘导出

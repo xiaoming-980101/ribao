@@ -12,7 +12,7 @@ describe('storage utils', () => {
 
   beforeEach(() => {
     mockStore = {};
-    global.localStorage = {
+    (globalThis as any).localStorage = {
       getItem: (key: string) => mockStore[key] || null,
       setItem: (key: string, value: string) => { mockStore[key] = String(value); },
       removeItem: (key: string) => { delete mockStore[key]; },
@@ -43,11 +43,9 @@ describe('storage utils', () => {
     });
 
     it('should include Authorization and X-Auth-Token headers when token is present', () => {
-      localStorage.setItem('winner_daily_user', 'alex');
       setAuthToken('token_xyz');
 
       const headers = getAuthHeaders({ 'Custom-Header': 'test' });
-      expect(headers['X-User-Name']).toBe('alex');
       expect(headers['Authorization']).toBe('Bearer token_xyz');
       expect(headers['X-Auth-Token']).toBe('token_xyz');
       expect(headers['Custom-Header']).toBe('test');

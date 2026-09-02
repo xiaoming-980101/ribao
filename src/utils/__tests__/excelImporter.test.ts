@@ -1,5 +1,4 @@
 import { describe, it, expect, vi } from 'vitest';
-import * as fs from 'fs';
 import { parseExcelFile, batchSaveImportedLogs, normalizeDateStr } from '../excelImporter';
 import * as storage from '../storage';
 
@@ -22,12 +21,18 @@ describe('Excel 工作日志导入器测试', () => {
   });
   it('应当能正确解析任务列表导出 Excel 并聚合同一天的任务', async () => {
     const samplePath = 'D:/下载/任务列表导出_20260831151506.xlsx';
-    if (!fs.existsSync(samplePath)) {
+    let nodeFs: any = null;
+    try {
+      // @ts-ignore
+      nodeFs = await import('fs');
+    } catch (_) {}
+
+    if (!nodeFs || !nodeFs.existsSync(samplePath)) {
       console.warn('测试环境未找到外部真实 Excel 文件，跳过外部路径读取');
       return;
     }
 
-    const buffer = fs.readFileSync(samplePath);
+    const buffer = nodeFs.readFileSync(samplePath);
     const file = new File([buffer], 'tasks.xlsx', {
       type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     });
@@ -48,7 +53,7 @@ describe('Excel 工作日志导入器测试', () => {
   });
 
   it('应当支持批量保存并触发进度回调', async () => {
-    vi.spyOn(storage, 'saveLog').mockResolvedValue({ success: true, data: {} as any });
+    vi.spyOn(storage, 'saveLog').mockResolvedValue({ success: true, isOffline: false });
 
     const mockDays = [
       { date: '2026-08-01', title: '测试1', hours: 8, content: '内容1', cooperation: false, difficulty: false },

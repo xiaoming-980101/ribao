@@ -19,12 +19,20 @@ export function createDefaultSettings(overrides = {}) {
   };
 }
 
+let isInitialized = false;
+
 export function initDB() {
+  if (isInitialized && fs.existsSync(DB_FILE)) {
+    return;
+  }
+
   const defaultData = {
     users: {
       admin: {
         password: hashPassword('admin123'),
         logs: {},
+        trash: {},
+        reports: {},
         settings: createDefaultSettings()
       }
     }
@@ -32,6 +40,7 @@ export function initDB() {
 
   if (!fs.existsSync(DB_FILE)) {
     fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2), 'utf8');
+    isInitialized = true;
     return;
   }
 
@@ -42,6 +51,8 @@ export function initDB() {
     if (!data.users || Object.keys(data.users).length === 0) {
       console.log('检测到数据库中无任何账号或格式不兼容，正在自动注入/迁移默认账号: admin...');
       const migratedLogs = data.logs || {};
+      const migratedTrash = data.trash || {};
+      const migratedReports = data.reports || {};
       const migratedSettings = data.settings || createDefaultSettings();
       
       const upgradedData = {
@@ -49,16 +60,49 @@ export function initDB() {
           admin: {
             password: hashPassword('admin123'),
             logs: migratedLogs,
+            trash: migratedTrash,
+            reports: migratedReports,
             settings: migratedSettings
           }
         }
       };
       fs.writeFileSync(DB_FILE, JSON.stringify(upgradedData, null, 2), 'utf8');
       console.log('默认账号注入/迁移成功 (密码: admin123)！');
+      return;
     }
+
+    // 兼容旧数据：为缺失 trash 容器的用户自动补空回收站
+    let migrated = false;
+    for (const key of Object.keys(data.users)) {
+      const u = data.users[key];
+      if (u && !u.trash) {
+        u.trash = {};
+        migrated = true;
+      }
+      if (u && !u.reports) {
+        u.reports = {};
+        migrated = true;
+      }
+      if (u && u.logs) {
+        // 兼容历史字段：为每条日志补齐 history 数组
+        for (const dateKey of Object.keys(u.logs)) {
+          const log = u.logs[dateKey];
+          if (log && !Array.isArray(log.history)) {
+            log.history = [];
+            migrated = true;
+          }
+        }
+      }
+    }
+    if (migrated) {
+      fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf8');
+      console.log('检测到旧版数据结构，已自动迁移补齐 trash 与 history 字段');
+    }
+    isInitialized = true;
   } catch (e) {
     console.error('初始化数据库失败，重置为默认账号结构:', e);
     fs.writeFileSync(DB_FILE, JSON.stringify(defaultData, null, 2), 'utf8');
+    isInitialized = true;
   }
 }
 

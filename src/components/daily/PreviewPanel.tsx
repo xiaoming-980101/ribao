@@ -28,10 +28,9 @@ interface PreviewPanelProps {
   maxSimilarity: number;
   similarDate: string;
   simLevel: {
-    level: 'low' | 'medium' | 'high';
+    level: 'safe' | 'warning' | 'danger';
     color: string;
     text: string;
-    description: string;
   };
   
   aiSettings: {

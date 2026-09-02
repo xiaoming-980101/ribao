@@ -13,6 +13,8 @@ router.get('/data', (req, res) => {
   const db = readDB();
   res.json({
     logs: db.users[username].logs || {},
+    trash: db.users[username].trash || {},
+    reports: db.users[username].reports || {},
     settings: db.users[username].settings || {}
   });
 });
@@ -26,7 +28,9 @@ router.post('/logs', (req, res) => {
   }
 
   const db = readDB();
-  db.users[username].logs[date] = {
+  const prevLog = db.users[username].logs[date];
+
+  const newLog = {
     title: title || '日常工作日志',
     hours: hours !== undefined ? Number(hours) : 8,
     cooperation: !!cooperation,
@@ -39,6 +43,18 @@ router.post('/logs', (req, res) => {
     updatedAt: new Date().toISOString()
   };
 
+  // 保存前把旧版本压入 history 快照（最多保留 10 条），实现日志修改历史可追溯
+  if (prevLog) {
+    const history = Array.isArray(prevLog.history) ? prevLog.history : [];
+    const { history: _ignoreHistory, ...prevCore } = prevLog;
+    history.push({ ...prevCore, versionAt: new Date().toISOString() });
+    newLog.history = history.slice(-10);
+  } else {
+    newLog.history = [];
+  }
+
+  db.users[username].logs[date] = newLog;
+
   if (writeDB(db)) {
     res.json({ success: true, log: db.users[username].logs[date] });
   } else {
@@ -46,19 +62,58 @@ router.post('/logs', (req, res) => {
   }
 });
 
-// API: 删除单条日志 (支持用户维度删除)
+// API: 删除单条日志 (支持用户维度删除，软删除进回收站可恢复)
 router.delete('/logs/:date', (req, res) => {
   const username = req.username;
   const { date } = req.params;
   const db = readDB();
 
   if (db.users[username] && db.users[username].logs[date]) {
+    const logToTrash = db.users[username].logs[date];
+    // 移入回收站（保留完整对象含 history），并打上删除时间戳
+    db.users[username].trash = db.users[username].trash || {};
+    db.users[username].trash[date] = {
+      ...logToTrash,
+      deletedAt: new Date().toISOString()
+    };
     delete db.users[username].logs[date];
     if (writeDB(db)) {
       return res.json({ success: true });
     }
   }
   res.status(404).json({ error: '日志不存在或删除失败' });
+});
+
+// API: 从回收站恢复指定日期的日志
+router.post('/logs/:date/restore', (req, res) => {
+  const username = req.username;
+  const { date } = req.params;
+  const db = readDB();
+
+  if (db.users[username] && db.users[username].trash && db.users[username].trash[date]) {
+    const restored = db.users[username].trash[date];
+    const { deletedAt: _ignore, ...cleanLog } = restored;
+    db.users[username].logs[date] = cleanLog;
+    delete db.users[username].trash[date];
+    if (writeDB(db)) {
+      return res.json({ success: true, log: db.users[username].logs[date] });
+    }
+  }
+  res.status(404).json({ error: '回收站中不存在该日志或恢复失败' });
+});
+
+// API: 清空回收站（彻底物理删除，不可恢复）
+router.post('/trash/clear', (req, res) => {
+  const username = req.username;
+  const db = readDB();
+
+  if (db.users[username]) {
+    db.users[username].trash = {};
+    if (writeDB(db)) {
+      return res.json({ success: true });
+    }
+  }
+  res.status(500).json({ error: '清空回收站失败' });
 });
 
 // API: 保存用户配置
@@ -89,6 +144,27 @@ router.post('/settings', (req, res) => {
   }
 });
 
+// API: 保存/更新某周次的周报内容（历史留档，随时可回看与对比）
+router.post('/reports/:weekKey', (req, res) => {
+  const username = req.username;
+  const { weekKey } = req.params;
+  const { content } = req.body;
+
+  if (typeof content !== 'string') {
+    return res.status(400).json({ error: '周报内容不能为空' });
+  }
+
+  const db = readDB();
+  db.users[username].reports = db.users[username].reports || {};
+  db.users[username].reports[weekKey] = content;
+
+  if (writeDB(db)) {
+    res.json({ success: true });
+  } else {
+    res.status(500).json({ error: '保存周报失败' });
+  }
+});
+
 // API: 恢复出厂设置 (支持单用户维度重置)
 router.post('/reset', (req, res) => {
   const username = req.username;
@@ -96,6 +172,8 @@ router.post('/reset', (req, res) => {
 
   if (db.users[username]) {
     db.users[username].logs = {};
+    db.users[username].trash = {};
+    db.users[username].reports = {};
     db.users[username].settings = createDefaultSettings();
     if (writeDB(db)) {
       return res.json({ success: true });

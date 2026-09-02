@@ -1,12 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { FileText, Copy, Check, CalendarRange, RefreshCw, CheckCircle2, Sparkles, Download, Bot } from 'lucide-react';
-import { AppData, LogEntry, generateAIWeeklyReport, getUserAISettings } from '../utils/storage';
+import { FileText, Copy, Check, CalendarRange, RefreshCw, CheckCircle2, Sparkles, Download, Bot, History as HistoryIcon, Save, Columns2 } from 'lucide-react';
+import { AppData, LogEntry, generateAIWeeklyReport, getUserAISettings, saveWeeklyReport } from '../utils/storage';
 
 interface WeeklyGeneratorProps {
   appData: AppData;
+  showToast?: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
+export default function WeeklyGenerator({ appData, showToast }: WeeklyGeneratorProps) {
   const [selectedYear, setSelectedYear] = useState<number>(2026);
   const [selectedWeek, setSelectedWeek] = useState<number>(1);
   const [weekDays, setWeekDays] = useState<{ dateStr: string; dayName: string; log?: LogEntry }[]>([]);
@@ -14,6 +15,22 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
   const [copied, setCopied] = useState<boolean>(false);
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [isAIGenerating, setIsAIGenerating] = useState<boolean>(false);
+  const [isSaving, setIsSaving] = useState<boolean>(false);
+  const [compareOpen, setCompareOpen] = useState<boolean>(false);
+  const [compareWeek, setCompareWeek] = useState<string>('');
+  // 本组件会话内新保存的周次与内容（后端已持久化，刷新页面后由 appData.reports 还原）
+  const freshlySavedRef = React.useRef<Set<string>>(new Set());
+  const freshContentRef = React.useRef<Record<string, string>>({});
+
+  const weekKey = (y: number, w: number) => `${y}-W${String(w).padStart(2, '0')}`;
+  const currentWeekKey = weekKey(selectedYear, selectedWeek);
+
+  // 周报历史：已持久化的周次集合（用于对比选择）
+  const savedReports = appData.reports || {};
+  const savedWeekKeys = Array.from(
+    new Set([...Object.keys(savedReports), ...freshlySavedRef.current])
+  ).sort();
+  const getReportContent = (key: string): string => freshContentRef.current[key] || savedReports[key] || '';
 
   const getYearAndWeek = (date: Date): { year: number; week: number } => {
     const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
@@ -62,8 +79,11 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
     });
 
     setWeekDays(formattedDays);
-    setWeeklyReport('');
-  }, [selectedYear, selectedWeek, appData.logs]);
+    // 切换周次时自动加载该周已持久化的周报（历史留档回看）
+    const saved = (appData.reports || {})[currentWeekKey];
+    setWeeklyReport(saved && saved.trim() ? saved : '');
+    setCompareOpen(false);
+  }, [selectedYear, selectedWeek, currentWeekKey]);
 
   // 本地规则聚合周报
   const handleGenerateLocalWeekly = () => {
@@ -149,6 +169,8 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
 
       setWeeklyReport(reportText);
       setIsGenerating(false);
+      // 生成成功后自动持久化该周次周报
+      saveReportToServer(weekKey(selectedYear, selectedWeek), reportText);
     }, 400);
   };
 
@@ -203,6 +225,8 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
       finalDoc += `**本周累计工时**: ${Math.round(totalHours * 10) / 10} 小时\n\n`;
       finalDoc += res.report;
       setWeeklyReport(finalDoc);
+      // 生成成功后自动持久化该周次周报
+      saveReportToServer(weekKey(selectedYear, selectedWeek), finalDoc);
     } else {
       alert(`AI 周报提炼遇到异常: ${res.error || '网络连接超时'}，已为您无缝降级为本地规则聚合。`);
       handleGenerateLocalWeekly();
@@ -210,12 +234,65 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
     setIsAIGenerating(false);
   };
 
+  // 打开对比时默认选中最近一个已保存的历史周次
+  useEffect(() => {
+    if (compareOpen && !compareWeek) {
+      const prevSaved = savedWeekKeys.filter((k) => k !== currentWeekKey);
+      if (prevSaved.length > 0) {
+        setCompareWeek(prevSaved[prevSaved.length - 1]);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [compareOpen]);
+
   const copyToClipboard = () => {
     if (!weeklyReport) return;
     navigator.clipboard.writeText(weeklyReport);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
+
+  // 持久化周报（写后端 + 更新会话内已保存集合）
+  const saveReportToServer = async (key: string, content: string) => {
+    mentallyMarkSaved(key, content);
+    const res = await saveWeeklyReport(key, content);
+    if (showToast) {
+      showToast(res.isOffline ? '周报已本地保存，联网后将自动同步' : `周报 ${key} 已保存`, res.isOffline ? 'info' : 'success');
+    }
+  };
+
+  const mentallyMarkSaved = (key: string, content: string) => {
+    freshContentRef.current[key] = content;
+    freshlySavedRef.current.add(key);
+    // 触发一次 setState 让下拉刷新
+    setCompareWeek((prev) => prev);
+  };
+
+  // 手动保存当前编辑内容
+  const handleManualSave = async () => {
+    if (!weeklyReport || !weeklyReport.trim()) {
+      if (showToast) showToast('当前无周报内容可保存', 'error');
+      return;
+    }
+    setIsSaving(true);
+    await saveReportToServer(currentWeekKey, weeklyReport);
+    setIsSaving(false);
+  };
+
+  // 自动保存当前周次周报（卸载/切页前兜底一次）
+  const latestWeeklyReportRef = React.useRef('');
+  latestWeeklyReportRef.current = weeklyReport;
+  const latestWeekKeyRef = React.useRef(currentWeekKey);
+  latestWeekKeyRef.current = currentWeekKey;
+  useEffect(() => {
+    return () => {
+      const content = latestWeeklyReportRef.current;
+      if (content && content.trim().length > 50) {
+        saveReportToServer(latestWeekKeyRef.current, content);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const downloadMarkdown = () => {
     if (!weeklyReport) return;
@@ -397,6 +474,47 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
             </div>
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
+                onClick={() => setCompareOpen((v) => !v)}
+                className="clickable"
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '10px',
+                  background: compareOpen ? 'rgba(99, 102, 241, 0.12)' : 'var(--glass-surface-subtle)',
+                  border: '1px solid ' + (compareOpen ? 'rgba(99, 102, 241, 0.4)' : 'var(--glass-border)'),
+                  color: compareOpen ? '#6366F1' : 'var(--text-primary)',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                title="与历史周次的周报对比查看"
+              >
+                <Columns2 size={14} />
+                <span>{compareOpen ? '收起对比' : '历史对比'}</span>
+              </button>
+              <button
+                onClick={handleManualSave}
+                disabled={isSaving}
+                className="clickable"
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '10px',
+                  background: 'rgba(16, 185, 129, 0.12)',
+                  border: '1px solid rgba(16, 185, 129, 0.35)',
+                  color: '#10B981',
+                  fontSize: '12px',
+                  fontWeight: '700',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+                title="将当前编辑内容保存为该周周报（历史留档）"
+              >
+                <Save size={14} />
+                <span>{isSaving ? '保存中...' : '保存该周'}</span>
+              </button>
+              <button
                 onClick={downloadMarkdown}
                 className="clickable"
                 style={{
@@ -450,6 +568,67 @@ export default function WeeklyGenerator({ appData }: WeeklyGeneratorProps) {
               fontSize: '13px'
             }}
           />
+
+          {/* 历史对比：选择历史周次，与当前周报并排对照 */}
+          {compareOpen && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+                <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <HistoryIcon size={13} />
+                  选择对比周次:
+                </span>
+                <select
+                  value={compareWeek || savedWeekKeys.filter((k) => k !== currentWeekKey)[0] || ''}
+                  onChange={(e) => setCompareWeek(e.target.value)}
+                  style={{ width: 'auto', minWidth: '120px', padding: '8px 12px' }}
+                >
+                  {savedWeekKeys.filter((k) => k !== currentWeekKey).map((k) => (
+                    <option key={k} value={k}>{k.replace('-W', ' 年 第 ')} 周</option>
+                  ))}
+                </select>
+                {savedWeekKeys.filter((k) => k !== currentWeekKey).length === 0 && (
+                  <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>暂无其他已保存周次，先生成并保存至少两周的周报再对比</span>
+                )}
+              </div>
+
+              {compareWeek && getReportContent(compareWeek) && (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(2, 1fr)',
+                    gap: '12px',
+                    border: '1px solid var(--glass-border-subtle)',
+                    borderRadius: '12px',
+                    padding: '12px',
+                    background: 'var(--glass-surface-subtle)'
+                  }}
+                >
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
+                    <div style={{ fontSize: '11px', fontWeight: '800', color: '#6366F1', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <HistoryIcon size={11} />
+                      历史 {compareWeek.replace('-W', ' 年 第 ')} 周
+                    </div>
+                    <textarea
+                      readOnly
+                      value={getReportContent(compareWeek)}
+                      style={{ width: '100%', minHeight: '300px', fontSize: '12px', lineHeight: '1.6', fontFamily: 'monospace', resize: 'none' }}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', minWidth: 0 }}>
+                    <div style={{ fontSize: '11px', fontWeight: '800', color: '#10B981', display: 'flex', alignItems: 'center', gap: '5px' }}>
+                      <FileText size={11} />
+                      当前 {currentWeekKey.replace('-W', ' 年 第 ')} 周
+                    </div>
+                    <textarea
+                      readOnly
+                      value={weeklyReport}
+                      style={{ width: '100%', minHeight: '300px', fontSize: '12px', lineHeight: '1.6', fontFamily: 'monospace', resize: 'none' }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>

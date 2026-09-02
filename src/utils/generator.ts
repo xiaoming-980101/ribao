@@ -19,40 +19,20 @@ export const LOCAL_DIRECTION_POOLS: Record<string, { idle: DirectionOption[]; st
       { id: 'be_mq_stream', title: '流式消息处理与背压机制预研', summary: '研究大数据量下流式管道消费与背压控制，评估高吞吐场景改造可行性', tag: '技术演进' }
     ]
   },
-      frontend: {
-    actions: [
-      [
-        '调整数据看板展示样式与图表联动逻辑，排查处理部分分辨率错位问题',
-        '排查大表单输入校验与联动状态，修复选项切换时的必填校验遗漏',
-        '对接新一期业务查询接口，核对字段映射并补充异常友好提示',
-        '跟进提测反馈的交互缺陷，修复弹窗重复弹出与状态回显问题',
-        '调试数据列表多条件筛选与分页联动逻辑，解决重置时页码未归位问题',
-        '走查移动端页面样式与兼容性表现，清理无用控制台输出与测试代码',
-        '提取页面公用交互逻辑并封装为通用组件，规范组件入参定义',
-        '优化长列表滚动加载与数据防抖控制，补充空状态友好占位',
-        '核对核心业务页面字段展示逻辑，补充弱网与加载失败兜底提示',
-        '配合后端同事联调接口数据结构，修改字段映射并完成联调测试'
-      ],
-      [
-        '本地自测各项功能与交互流转正常',
-        '多场景回归测试均已通过，运行平稳',
-        '经测试环境验证，改动逻辑均符合预期',
-        '本地跑了几组边界用例，显示与交互正常',
-        '相关自测与联调流程已全部走通'
-      ]
+  frontend: {
+    idle: [
+      { id: 'fe_hook', title: '前端公共业务 Hooks 与状态封装', summary: '提取高频交互与请求逻辑为通用自定义 Hook，消除各页面重复状态管理代码', tag: '组件架构' },
+      { id: 'fe_vite', title: 'Vite 构建分包与静态资源加载优化', summary: '调优 Rollup 分包策略，配置图片懒加载与 WebP 压缩，降低首屏体积', tag: '构建性能' },
+      { id: 'fe_table', title: '大表单与复杂表格渲染性能调优', summary: '针对多字段联动大表单优化组件局部重绘，排查长列表卡顿并引入虚拟滚动', tag: '渲染调优' },
+      { id: 'fe_error', title: '全局接口错误边界与弱网兜底提示', summary: '加固 Axios/Fetch 响应拦截与 React ErrorBoundary，完善断网与超时友好提示', tag: '容错体验' },
+      { id: 'fe_clean', title: '无用 CSS 类名与废弃组件重构清理', summary: '走查历史页面 CSS 冗余类名与未引用图标，统一公共全局变量并执行回归验证', tag: '代码重构' }
     ],
     study: [
-      [
-        '梳理前端常用组件库最新特性与规范，整理业务可复用组件清单',
-        '总结前端首屏加载与静态资源优化技巧，完成现有页面自查',
-        '整理复杂业务场景下的 TypeScript 类型定义与泛型工具方法',
-        '梳理常见边界场景与自测要点，整理质量自查清单'
-      ],
-      [
-        '已整理相关要点笔记，方便后续业务参考',
-        '结合现有项目结构做了梳理与归档',
-        '已沉淀为简明开发与自测规范文档'
-      ]
+      { id: 'fe_react19', title: 'React 19 Actions 与 Server Components 预研', summary: '学习 React 19 新特性与异步状态处理规范，在本地 Demo 验证迁移成本', tag: '框架前沿' },
+      { id: 'fe_wasm', title: 'WebAssembly 在前端复杂计算中的应用', summary: '调研 Rust/C++ 编译为 WASM 处理大文件与客户端编解码的性能优势与场景', tag: '前沿技术' },
+      { id: 'fe_micro', title: '微前端沙箱隔离与跨应用通信机制', summary: '对比 qiankun 与 Module Federation 架构，梳理主子应用样式隔离最佳实践', tag: '架构演进' },
+      { id: 'fe_pwa', title: 'PWA 离线缓存与 Service Worker 机制', summary: '学习现代 Web App 离线存储与后台同步协议，评估在低弱网场景的可用性', tag: '体验演进' },
+      { id: 'fe_perf', title: 'Core Web Vitals 核心性能指标监控与调优', summary: '研究 LCP/INP/CLS 等现代前端度量指标，梳理团队性能监控上报最佳方案', tag: '性能监控' }
     ]
   },
   fullstack: {
@@ -66,7 +46,9 @@ export const LOCAL_DIRECTION_POOLS: Record<string, { idle: DirectionOption[]; st
     study: [
       { id: 'fs_ssr', title: '现代 SSR/SSG 渲染架构性能对比', summary: '调研服务端渲染与边缘计算缓存策略，搭建 Benchmark 原型评估首屏提速效果', tag: '渲染架构' },
       { id: 'fs_grpc_web', title: 'gRPC-Web 与 HTTP/3 传输协议调研', summary: '研究现代二进制传输协议在前后端直连场景的应用，评估低延迟网络表现', tag: '网络协议' },
-      { id: 'fs_edge_db', title: '分布式边缘数据库与读写分离预研', summary: '调研边缘多区域数据同步与连接池复用方案，沉淀技术调研文档', tag: '分布式存储' }
+      { id: 'fs_edge_db', title: '分布式边缘数据库与读写分离预研', summary: '调研边缘多区域数据同步与连接池复用方案，沉淀技术调研文档', tag: '分布式存储' },
+      { id: 'fs_oidc', title: '基于 OIDC 与 OAuth 2.1 的统一认证', summary: '研究基于现代标准协议的多端单点登录流转，整理权限中台接入架构规范', tag: '统一认证' },
+      { id: 'fs_graphql', title: 'GraphQL 与 RESTful 架构选型复盘', summary: '对比前后端数据按需查询与接口聚合开销，评估在多端矩阵项目中的适配度', tag: '数据聚合' }
     ]
   },
   designer: {
@@ -80,7 +62,9 @@ export const LOCAL_DIRECTION_POOLS: Record<string, { idle: DirectionOption[]; st
     study: [
       { id: 'ui_spatial', title: '空间计算与液态玻璃视觉趋势调研', summary: '拆解先锋 UI 趋势中的多层光学模糊与镜面高光细节，制作团队视觉灵感 Moodboard', tag: '前沿趋势' },
       { id: 'ui_accessibility', title: '无障碍色彩对比度与可读性标准', summary: '学习 WCAG 2.1 颜色对比度要求，评估现有产品在高对比度下的视觉可识别度', tag: '包容性设计' },
-      { id: 'ui_design_tokens', title: 'Design Tokens 跨端同步工作流', summary: '研究 Figma Token 插件与前端 CSS Variables 自动化同步机制，提高协作效率', tag: '工程化协作' }
+      { id: 'ui_design_tokens', title: 'Design Tokens 跨端同步工作流', summary: '研究 Figma Token 插件与前端 CSS Variables 自动化同步机制，提高协作效率', tag: '工程化协作' },
+      { id: 'ui_figma_vars', title: 'Figma Variables 高级变量与暗黑模式适配', summary: '研究主题模式一键切换下的语义 Token 映射，搭建跨端设计组件库变量骨架', tag: '设计系统' },
+      { id: 'ui_micro_ux', title: '微交互心智模型与用户感知延迟优化', summary: '学习界面操作即时反馈与过渡动效心理学，整理表单交互防挫败体验卡片', tag: '交互体验' }
     ]
   },
   tester: {
@@ -94,7 +78,9 @@ export const LOCAL_DIRECTION_POOLS: Record<string, { idle: DirectionOption[]; st
     study: [
       { id: 'qa_k6_perf', title: '基于 K6 / JMeter 性能压测指标分析', summary: '学习并发压测线程模型、TPS 吞吐量与 P99 响应延迟分析，整理压测方案模板', tag: '性能测试' },
       { id: 'qa_playwright', title: 'Playwright 现代化 UI 自动化测试', summary: '学习 Playwright 录制回放与多端并行执行特性，对比现有框架并搭建 POC 验证', tag: '工具升级' },
-      { id: 'qa_security', title: 'Web 安全渗透与常见漏洞测试要点', summary: '学习 SQL 注入、XSS 与越权访问排查要点，整理常规业务安全测试检查项', tag: '安全测试' }
+      { id: 'qa_security', title: 'Web 安全渗透与常见漏洞测试要点', summary: '学习 SQL 注入、XSS 与越权访问排查要点，整理常规业务安全测试检查项', tag: '安全测试' },
+      { id: 'qa_chaos', title: '混沌工程与弱网容灾故障演练学习', summary: '调研接口丢包、高延迟与服务雪崩下的容灾表现，梳理团队混沌演练策略', tag: '高可用' },
+      { id: 'qa_contract', title: '基于 Pact 的契约测试方法与落地', summary: '研究微服务前后端契约断言方案，评估在跨端联调中减少沟通成本的可行性', tag: '契约测试' }
     ]
   },
   pm: {
@@ -108,7 +94,9 @@ export const LOCAL_DIRECTION_POOLS: Record<string, { idle: DirectionOption[]; st
     study: [
       { id: 'pm_ai_product', title: 'AI 原生应用产品交互设计模式调研', summary: '研究 LLM 对话交互与 Generative UI 最佳实践，分析如何降低用户输入门槛', tag: 'AI 产品' },
       { id: 'pm_growth', title: 'PLG 产品驱动增长模型与策略', summary: '学习以产品体验驱动自传播与转化的设计框架，梳理自服务引导流程优化点', tag: '增长策略' },
-      { id: 'pm_metrics', title: '北极星指标体系与指标下钻拆解', summary: '学习现代数字化产品核心指标监控体系，设计科学的 A/B 测试对照评估方案', tag: '数据体系' }
+      { id: 'pm_metrics', title: '北极星指标体系与指标下钻拆解', summary: '学习现代数字化产品核心指标监控体系，设计科学的 A/B 测试对照评估方案', tag: '数据体系' },
+      { id: 'pm_user_research', title: '定性用户深度访谈与共情地图绘制', summary: '学习标准化用户访谈提纲设计与画像归类方法，沉淀用户核心痛点卡片', tag: '用户研究' },
+      { id: 'pm_strategy', title: '商业化变现模式与定价策略调研', summary: '分析 SaaS 与平台型产品的增值功能分层策略，整理商业化推进调研报告', tag: '商业策略' }
     ]
   },
   devops: {
@@ -122,7 +110,9 @@ export const LOCAL_DIRECTION_POOLS: Record<string, { idle: DirectionOption[]; st
     study: [
       { id: 'ops_k8s_mesh', title: 'Service Mesh 流量治理与金丝雀发布', summary: '学习 Istio 服务网格微服务流量调度策略与零停机灰度发布方案，整理实操笔记', tag: '云原生' },
       { id: 'ops_iac', title: 'Terraform 基础设施即代码 (IaC) 实践', summary: '研究使用声明式代码编排云服务器与网络资源，评估团队基础设施自动化改造', tag: '自动化运维' },
-      { id: 'ops_ebpf', title: 'eBPF 现代系统级可观测性与网络诊断', summary: '学习 Linux 内核级探针在网络排障、性能分析与安全防御中的应用场景与案例', tag: '底层技术' }
+      { id: 'ops_ebpf', title: 'eBPF 现代系统级可观测性与网络诊断', summary: '学习 Linux 内核级探针在网络排障、性能分析与安全防御中的应用场景与案例', tag: '底层技术' },
+      { id: 'ops_gitops', title: 'ArgoCD 与 GitOps 持续部署最佳实践', summary: '学习声明式集群状态管理与配置漂移自愈机制，整理团队 CD 升级方案', tag: 'GitOps' },
+      { id: 'ops_finops', title: '云原生资源降本增效 (FinOps) 治理', summary: '调研按需弹性伸缩、HPA 自动扩缩容与闲置资源回收，沉淀成本管控规范', tag: '成本优化' }
     ]
   },
   generic: {
@@ -136,7 +126,9 @@ export const LOCAL_DIRECTION_POOLS: Record<string, { idle: DirectionOption[]; st
     study: [
       { id: 'gen_skill', title: '岗位专业技能与行业前沿资料学习', summary: '阅读行业前沿分析报告与专业最佳实践指南，提炼可落地的思维方法并做笔记', tag: '技能提升' },
       { id: 'gen_process', title: '敏捷项目协同与标准化流程学习', summary: '学习高效团队在跨部门协作与质量把控方面的标准作业流程，沉淀参考建议', tag: '方法论' },
-      { id: 'gen_tool', title: 'AI 辅助生产力工具在日常场景的实操', summary: '探索利用 AI 工具快速提取信息、整理结构化文档与数据校验的实操技巧', tag: '效率探索' }
+      { id: 'gen_tool', title: 'AI 辅助生产力工具在日常场景的实操', summary: '探索利用 AI 工具快速提取信息、整理结构化文档与数据校验的实操技巧', tag: '效率探索' },
+      { id: 'gen_writing', title: '结构化技术写作与表达逻辑提升', summary: '学习金字塔原理在技术方案与工作总结中的应用，提升跨团队沟通交付效率', tag: '沟通表达' },
+      { id: 'gen_problem_solving', title: '复杂问题根因分析与复盘方法论', summary: '学习 5-Whys 分析法与故障复盘机制，梳理日常研发与协作的避坑卡片', tag: '根因分析' }
     ]
   }
 };

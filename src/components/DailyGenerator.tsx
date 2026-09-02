@@ -1,4 +1,5 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Info, X } from 'lucide-react';
 import {
   AppData,
   saveLog,
@@ -20,6 +21,7 @@ import { PreviewPanel } from './daily/PreviewPanel';
 import { AIModelControls } from './daily/AIModelControls';
 
 import { copyTextToClipboard } from '../utils/clipboard';
+import { saveDraft, loadDraft, clearDraft, LogDraft } from '../utils/draft';
 import {
   checkIsRecommended,
   formatSelectedModel,
@@ -53,6 +55,11 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   // 交互状态
   const [copiedField, setCopiedField] = useState<string | null>(null);
   const [saveStatus, setSaveStatus] = useState<'idle' | 'saving' | 'success' | 'error'>('idle');
+
+  // 草稿自动保存状态
+  const [draftNotice, setDraftNotice] = useState<string | null>(null);
+  const draftTimerRef = useRef<number | null>(null);
+  const editingDateRef = useRef<string>('');
 
   // 岗位和语气
   const [job, setJob] = useState<string>('frontend');
@@ -173,9 +180,28 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     setDifficulty(false);
   }, [mode]);
 
-  // 自动加载该日期的日志
+  // 自动加载该日期的日志（并优先恢复该日期的未保存草稿）
   useEffect(() => {
     if (selectedDate) {
+      // 切换日期前，先把上一个日期的当前编辑内容即时落盘为草稿（防止 1s 防抖未触发）
+      const prevDate = editingDateRef.current;
+      if (prevDate && prevDate !== selectedDate) {
+        const prevSaved = appData.logs[prevDate];
+        const prevSameAsSaved =
+          prevSaved &&
+          title === prevSaved.title &&
+          content === prevSaved.content &&
+          hours === prevSaved.hours &&
+          cooperation === prevSaved.cooperation &&
+          difficulty === prevSaved.difficulty;
+        if (!prevSameAsSaved && (title.trim() || content.trim())) {
+          saveDraft(prevDate, { title, hours, cooperation, difficulty, content });
+        }
+      }
+
+      // 记录当前表单字段属于哪个日期（供草稿自动保存使用）
+      editingDateRef.current = selectedDate;
+
       if (appData.logs[selectedDate]) {
         const existing = appData.logs[selectedDate];
         setTitle(existing.title);
@@ -190,6 +216,24 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         setCooperation(false);
         setDifficulty(false);
       }
+
+      // 检测该日期是否存在未保存草稿（且草稿内容与已保存日志不同则恢复）
+      const draft = loadDraft(selectedDate);
+      if (draft && draft.content && draft.content.trim()) {
+        const savedLog = appData.logs[selectedDate];
+        const differsFromSaved = !savedLog || draft.content.trim() !== (savedLog.content || '').trim();
+        if (differsFromSaved) {
+          setTitle(draft.title);
+          setHours(typeof draft.hours === 'number' ? draft.hours : 8);
+          setCooperation(!!draft.cooperation);
+          setDifficulty(!!draft.difficulty);
+          setContent(draft.content);
+          setDraftNotice(`已恢复 ${selectedDate} 的未保存草稿`);
+        } else {
+          // 草稿与已保存内容一致，直接清理无用草稿
+          clearDraft(selectedDate);
+        }
+      }
     }
   }, [selectedDate, appData.logs]);
 
@@ -197,9 +241,6 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   const shortcutsRef = React.useRef<{ handleGenerateWrapper: () => void; handleSave: () => void }>({
     handleGenerateWrapper: () => {},
     handleSave: () => {}
-  });
-  useEffect(() => {
-    shortcutsRef.current = { handleGenerateWrapper, handleSave };
   });
 
   useEffect(() => {
@@ -216,6 +257,36 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  // 每次渲染后同步最新的生成/保存函数到快捷键 ref
+  useEffect(() => {
+    shortcutsRef.current = { handleGenerateWrapper, handleSave };
+  });
+
+  // 草稿自动保存：字段变化时防抖 1s 写入草稿（内容与已保存日志一致时不写）
+  useEffect(() => {
+    if (!selectedDate) return;
+    const savedLog = appData.logs[selectedDate];
+    const sameAsSaved =
+      savedLog &&
+      title === savedLog.title &&
+      content === savedLog.content &&
+      hours === savedLog.hours &&
+      cooperation === savedLog.cooperation &&
+      difficulty === savedLog.difficulty;
+
+    // 无内容或与已保存一致时不写草稿（避免把已保存内容重复沉淀）
+    if (sameAsSaved || (!title.trim() && !content.trim())) return;
+
+    if (draftTimerRef.current) window.clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = window.setTimeout(() => {
+      saveDraft(selectedDate, { title, hours, cooperation, difficulty, content });
+    }, 1000);
+
+    return () => {
+      if (draftTimerRef.current) window.clearTimeout(draftTimerRef.current);
+    };
+  }, [selectedDate, title, content, hours, cooperation, difficulty, appData.logs]);
 
   // 快速选择日期
   const setQuickDate = (offset: number) => {
@@ -399,6 +470,9 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
 
     const res = await saveLog(selectedDate, logData);
     if (res.success) {
+      // 保存成功后清理该日期的未保存草稿
+      clearDraft(selectedDate);
+      setDraftNotice(null);
       setSaveStatus('success');
       setSessionHistory((prev) => {
         const next = [...prev, content.trim()];
@@ -438,6 +512,48 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           </p>
         </div>
       </div>
+
+      {draftNotice && (
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: '12px',
+            padding: '10px 16px',
+            borderRadius: '12px',
+            border: '1px solid rgba(245, 158, 11, 0.35)',
+            background: 'rgba(245, 158, 11, 0.08)',
+            fontSize: '13px',
+            color: 'var(--text-primary)'
+          }}
+        >
+          <span style={{ display: 'flex', alignItems: 'center', gap: '8px', fontWeight: '600' }}>
+            <Info size={15} color="#F59E0B" />
+            <span>{draftNotice}。刷新或关闭页面不会丢失这些内容。</span>
+          </span>
+          <button
+            onClick={() => {
+              setDraftNotice(null);
+            }}
+            className="clickable"
+            style={{
+              flexShrink: 0,
+              padding: '6px 12px',
+              borderRadius: '8px',
+              background: 'var(--glass-surface-subtle)',
+              border: '1px solid var(--glass-border)',
+              color: 'var(--text-secondary)',
+              fontSize: '12px',
+              fontWeight: '600',
+              cursor: 'pointer'
+            }}
+          >
+            <X size={13} style={{ verticalAlign: '-2px', marginRight: '4px' }} />
+            知道了
+          </button>
+        </div>
+      )}
 
       <div className="two-col-layout">
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }} className="two-col-left">

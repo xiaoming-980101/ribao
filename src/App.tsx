@@ -5,7 +5,8 @@ import HistoryCalendar from './components/HistoryCalendar';
 import WeeklyGenerator from './components/WeeklyGenerator';
 import Settings from './components/Settings';
 import LoginModal from './components/LoginModal';
-import { fetchAllData, AppData, syncOfflineOperations } from './utils/storage';
+import { fetchAllData, AppData, syncOfflineOperations, removeAuthToken } from './utils/storage';
+import { clearAllDrafts } from './utils/draft';
 import { CheckCircle2, AlertTriangle, Info, Menu, PenSquare, RefreshCw } from 'lucide-react';
 
 interface ErrorBoundaryProps {
@@ -85,6 +86,8 @@ export default function App() {
 
   const [appData, setAppData] = useState<AppData>({
     logs: {},
+    trash: {},
+    reports: {},
     settings: {
       job: 'frontend',
       customJobName: '',
@@ -108,13 +111,19 @@ export default function App() {
   };
 
   const handleLogout = () => {
+    if (username) {
+      clearAllDrafts(username);
+      localStorage.removeItem(`winner_daily_ai_settings_${username}`);
+    }
+    removeAuthToken();
     localStorage.removeItem('winner_daily_user');
-    if (username) localStorage.removeItem(`winner_daily_ai_settings_${username}`);
     localStorage.removeItem('winner_daily_ai_settings');
     setUsername(null);
     showToast('您已成功退出登录，敏感密钥与数据已彻底隔离擦除！', 'info');
     setAppData({
       logs: {},
+      trash: {},
+      reports: {},
       settings: {
         job: 'frontend',
         customJobName: '',
@@ -142,6 +151,8 @@ export default function App() {
     if (result && result.data) {
       setAppData({
         logs: result.data.logs || {},
+        trash: result.data.trash || {},
+        reports: result.data.reports || {},
         settings: result.data.settings || {
           job: 'frontend',
           customJobName: '',
@@ -231,7 +242,7 @@ export default function App() {
       case 'calendar':
         return <HistoryCalendar appData={appData} onLogChange={loadData} onNavigateToGenerator={() => setCurrentTab('generator')} showToast={showToast} />;
       case 'weekly':
-        return <WeeklyGenerator appData={appData} />;
+        return <WeeklyGenerator appData={appData} showToast={showToast} />;
       case 'settings':
         return <Settings appData={appData} onSaveSuccess={loadData} showToast={showToast} />;
       default:

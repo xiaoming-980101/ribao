@@ -5,7 +5,7 @@ import {
   getJobDisplayName,
   expandUserInput,
   generateRandomDaily,
-  generateAIPrompt
+  generateLocalDirectionSuggestions
 } from '../generator';
 
 describe('generator utils', () => {
@@ -93,11 +93,23 @@ describe('generator utils', () => {
     });
   });
 
-  describe('generateAIPrompt', () => {
-    it('should generate containing job name and user input', () => {
-      const prompt = generateAIPrompt('修复Bug', 'backend');
-      expect(prompt).toContain('后端开发工程师');
-      expect(prompt).toContain('修复Bug');
+  describe('generateLocalDirectionSuggestions', () => {
+    it('应当为前端、后端、全栈等所有岗位稳定生成 5 个有效方向切入点', () => {
+      const roles = ['frontend', 'backend', 'fullstack', 'tester', 'designer', 'pm', 'devops', 'generic'];
+      roles.forEach((role) => {
+        ['idle', 'study'].forEach((mode) => {
+          const suggestions = generateLocalDirectionSuggestions(role, mode);
+          expect(suggestions.length).toBe(5);
+          suggestions.forEach((item) => {
+            expect(item).toHaveProperty('id');
+            expect(item).toHaveProperty('title');
+            expect(item).toHaveProperty('summary');
+            expect(item).toHaveProperty('tag');
+            expect(typeof item.title).toBe('string');
+            expect(item.title.length).toBeGreaterThan(0);
+          });
+        });
+      });
     });
   });
 });
