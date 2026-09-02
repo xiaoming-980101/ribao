@@ -1,6 +1,6 @@
 import express from 'express';
 import { readDB, writeDB, createDefaultSettings, upgradePasswordHash } from '../db.js';
-import { hashPassword, verifyPassword } from '../utils/password.js';
+import { hashPassword, verifyPassword, generateAuthToken } from '../utils/password.js';
 import { authLimiter } from '../middleware/rateLimit.js';
 
 const router = express.Router();
@@ -56,8 +56,11 @@ router.post('/login', authLimiter, (req, res) => {
     upgradePasswordHash(normalizedUser, password);
   }
 
+  const token = generateAuthToken(normalizedUser);
+
   res.json({
     success: true,
+    token,
     username: normalizedUser,
     settings: user.settings
   });

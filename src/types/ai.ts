@@ -17,3 +17,10 @@ export interface CompareResult {
   routeInfo?: RouteInfo;
   error?: string;
 }
+
+export interface DirectionOption {
+  id: string;
+  title: string;
+  summary: string;
+  tag: string;
+}

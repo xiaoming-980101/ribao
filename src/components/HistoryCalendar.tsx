@@ -1,18 +1,24 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
   CheckCircle2,
   AlertCircle,
-  Plus,
   Trash2,
   Copy,
   Check,
-  Coffee,
-  HelpCircle
+  Calendar as CalendarIcon,
+  Sparkles,
+  Save,
+  Upload,
+  FileSpreadsheet,
+  X,
+  Clock,
+  ArrowRight
 } from 'lucide-react';
 import { AppData, deleteLog, saveLog } from '../utils/storage';
-import { generateRandomFrontendDaily, expandUserInput } from '../utils/generator';
+import { generateRandomFrontendDaily } from '../utils/generator';
+import { parseExcelFile, batchSaveImportedLogs, ParsedImportDay } from '../utils/excelImporter';
 
 interface HistoryCalendarProps {
   appData: AppData;
@@ -24,7 +30,7 @@ interface HistoryCalendarProps {
 export default function HistoryCalendar({
   appData,
   onLogChange,
-  onNavigateToGenerator,
+  onNavigateToGenerator: _onNavigateToGenerator,
   showToast
 }: HistoryCalendarProps) {
   const [currentDate, setCurrentDate] = useState<Date>(new Date());
@@ -38,27 +44,38 @@ export default function HistoryCalendar({
   const [quickCooperation, setQuickCooperation] = useState(false);
   const [quickDifficulty, setQuickDifficulty] = useState(false);
 
+  // ── Excel 导入相关状态 ──
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [parsedImportDays, setParsedImportDays] = useState<ParsedImportDay[]>([]);
+  const [isImporting, setIsImporting] = useState(false);
+  const [importProgress, setImportProgress] = useState<{ current: number; total: number }>({ current: 0, total: 0 });
+  const [isDragOver, setIsDragOver] = useState(false);
+
+  // 安全获取 logs 和 settings
+  const logs = (appData && appData.logs) ? appData.logs : {};
+  const settings = (appData && appData.settings) ? appData.settings : {
+    job: 'frontend',
+    tone: 'professional',
+    rollingDays: 7
+  };
+
   // 基础时间计算
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
-  const rollingDays = appData.settings.rollingDays || 7;
-  // 滚动补录窗口的开始日期
+  const rollingDays = settings.rollingDays || 7;
   const sevenDaysAgo = new Date(today.getTime() - (rollingDays - 1) * 24 * 60 * 60 * 1000);
 
-  // 日历生成逻辑
   const year = currentDate.getFullYear();
-  const month = currentDate.getMonth(); // 0-11
+  const month = currentDate.getMonth();
 
-  const firstDayOfMonth = new Date(year, month, 1).getDay(); // 本月第一天是周几
-  const daysInMonth = new Date(year, month + 1, 0).getDate(); // 本月有多少天
-
-  const prevMonthDays = new Date(year, month, 0).getDate(); // 上个月有多少天
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
+  const daysInMonth = new Date(year, month + 1, 0).getDate();
+  const prevMonthDays = new Date(year, month, 0).getDate();
 
   const calendarCells = [];
 
-  // 1. 上个月垫后日期
-  // 如果本月第一天是周日 (firstDayOfMonth === 0)，需要垫 6 天 (如果是周一到周六，垫 firstDayOfMonth - 1 天)
   const daysToPad = firstDayOfMonth === 0 ? 6 : firstDayOfMonth - 1;
   for (let i = daysToPad; i > 0; i--) {
     const d = prevMonthDays - i + 1;
@@ -69,7 +86,6 @@ export default function HistoryCalendar({
     });
   }
 
-  // 2. 本月日期
   for (let i = 1; i <= daysInMonth; i++) {
     const date = new Date(year, month, i);
     calendarCells.push({
@@ -78,17 +94,15 @@ export default function HistoryCalendar({
     });
   }
 
-  // 3. 下个月垫前日期 (保证日历是 6 行，共 42 个格子)
   const remainingCells = 42 - calendarCells.length;
   for (let i = 1; i <= remainingCells; i++) {
-    const nextMonthDate = new Date(year, month + 1, i);
+    const nextDate = new Date(year, month + 1, i);
     calendarCells.push({
-      date: nextMonthDate,
+      date: nextDate,
       isCurrentMonth: false
     });
   }
 
-  // 转换日期对象为 YYYY-MM-DD
   const formatDateStr = (date: Date): string => {
     const y = date.getFullYear();
     const m = String(date.getMonth() + 1).padStart(2, '0');
@@ -96,21 +110,19 @@ export default function HistoryCalendar({
     return `${y}-${m}-${d}`;
   };
 
-  // 评估某天的状态属性
   const getDateStatus = (date: Date) => {
     date.setHours(0, 0, 0, 0);
     const dateStr = formatDateStr(date);
-    const hasLog = !!appData.logs[dateStr];
+    const hasLog = !!logs[dateStr];
     const isWeekend = date.getDay() === 0 || date.getDay() === 6;
     const isFuture = date > today;
     const inWindow = date >= sevenDaysAgo && date <= today;
 
-    // 过期天数计算：如果是漏填的，计算离今天过去了几天，离过期还剩几天
     let daysLeftToFill = 0;
     if (inWindow && !hasLog && !isWeekend) {
       const diffTime = today.getTime() - date.getTime();
       const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      daysLeftToFill = (rollingDays - 1) - diffDays; // 还剩几天可以补填
+      daysLeftToFill = (rollingDays - 1) - diffDays;
     }
 
     return {
@@ -122,7 +134,6 @@ export default function HistoryCalendar({
     };
   };
 
-  // 切换月份
   const handlePrevMonth = () => {
     setCurrentDate(new Date(year, month - 1, 1));
   };
@@ -131,24 +142,21 @@ export default function HistoryCalendar({
     setCurrentDate(new Date(year, month + 1, 1));
   };
 
-  // 选中某天
   const handleSelectDate = (date: Date) => {
     const status = getDateStatus(date);
-    if (status.isFuture) return; // 未来日期不可选
+    if (status.isFuture) return;
 
     const dateStr = formatDateStr(date);
     setSelectedDateStr(dateStr);
 
-    if (appData.logs[dateStr]) {
-      // 已有日志，加载详情
-      const log = appData.logs[dateStr];
-      setQuickTitle(log.title);
-      setQuickContent(log.content);
-      setQuickHours(log.hours);
-      setQuickCooperation(log.cooperation);
-      setQuickDifficulty(log.difficulty);
+    if (logs[dateStr]) {
+      const log = logs[dateStr];
+      setQuickTitle(log.title || '');
+      setQuickContent(log.content || '');
+      setQuickHours(log.hours || 8);
+      setQuickCooperation(!!log.cooperation);
+      setQuickDifficulty(!!log.difficulty);
     } else {
-      // 未填日志，清空表单并初始化默认值
       setQuickTitle('');
       setQuickContent('');
       setQuickHours(8);
@@ -157,11 +165,10 @@ export default function HistoryCalendar({
     }
   };
 
-  // 快捷一键自动补录（最核心爽点功能）
   const handleQuickAutoGenerate = () => {
     if (!selectedDateStr) return;
-    const job = appData.settings.job || 'frontend';
-    const result = generateRandomFrontendDaily(selectedDateStr, false, job);
+    const currentJob = settings.job || 'frontend';
+    const result = generateRandomFrontendDaily(selectedDateStr, false, currentJob);
     setQuickTitle(result.title);
     setQuickHours(result.hours);
     setQuickCooperation(result.cooperation);
@@ -169,7 +176,6 @@ export default function HistoryCalendar({
     setQuickContent(result.content);
   };
 
-  // 快捷一键保存
   const handleQuickSave = async () => {
     if (!selectedDateStr || !quickTitle.trim() || !quickContent.trim()) {
       showToast('请输入日志标题和内容！', 'error');
@@ -182,21 +188,20 @@ export default function HistoryCalendar({
       cooperation: quickCooperation,
       difficulty: quickDifficulty,
       content: quickContent.trim(),
-      job: appData.settings.job,
-      tone: appData.settings.tone,
+      job: settings.job || 'frontend',
+      tone: settings.tone || 'professional',
       isAutoGenerated: true
     };
 
     const res = await saveLog(selectedDateStr, logData);
     if (res.success) {
-      showToast(`🎉 ${selectedDateStr} 日报保存成功，已同步写入本地 db.json 数据库！`, 'success');
+      showToast(`${selectedDateStr} 日报保存成功，已同步写入数据库！`, 'success');
       onLogChange();
     } else {
-      showToast('❌ 保存失败，请确认后端 API 服务已正常开启！', 'error');
+      showToast('保存失败，请确认后端 API 服务已正常开启！', 'error');
     }
   };
 
-  // 快捷删除日志
   const handleQuickDelete = async () => {
     if (!selectedDateStr) return;
     if (confirm(`确定要删除 ${selectedDateStr} 的工作日志吗？`)) {
@@ -212,7 +217,6 @@ export default function HistoryCalendar({
     }
   };
 
-  // 复制文本
   const copyText = (text: string, field: string) => {
     navigator.clipboard.writeText(text);
     setCopiedField(field);
@@ -220,28 +224,102 @@ export default function HistoryCalendar({
     setTimeout(() => setCopiedField(null), 1500);
   };
 
-  // 统计近期考核状况
+  // ── Excel 上传与解析 ──
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    await processExcelFile(file);
+    e.target.value = '';
+  };
+
+  const handleDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragOver(false);
+    const file = e.dataTransfer.files?.[0];
+    if (file) {
+      await processExcelFile(file);
+    }
+  };
+
+  const processExcelFile = async (file: File) => {
+    try {
+      showToast('正在解析任务导出 Excel 文件...', 'info');
+      const parsed = await parseExcelFile(file);
+      if (parsed.length === 0) {
+        showToast('未在文件中识别到有效的工作任务日期与内容！', 'error');
+        return;
+      }
+      setParsedImportDays(parsed);
+      setImportModalOpen(true);
+    } catch (err: any) {
+      console.error('解析 Excel 失败:', err);
+      showToast(`解析 Excel 文件失败: ${err.message || '格式不受支持'}`, 'error');
+    }
+  };
+
+  const handleConfirmBatchImport = async () => {
+    if (parsedImportDays.length === 0) return;
+    setIsImporting(true);
+    setImportProgress({ current: 0, total: parsedImportDays.length });
+
+    try {
+      const { successCount, failCount } = await batchSaveImportedLogs(
+        parsedImportDays,
+        (current, total) => {
+          setImportProgress({ current, total });
+        }
+      );
+
+      if (successCount > 0) {
+        showToast(`成功导入并覆盖 ${successCount} 天的工作日志！`, 'success');
+        onLogChange();
+        setImportModalOpen(false);
+
+        // 如果导入的最新的日期有效，自动跳转到该月并选中最新日期
+        const lastDay = parsedImportDays[parsedImportDays.length - 1];
+        if (lastDay && lastDay.date) {
+          const parts = lastDay.date.split('-');
+          if (parts.length === 3) {
+            setCurrentDate(new Date(parseInt(parts[0]), parseInt(parts[1]) - 1, 1));
+            setSelectedDateStr(lastDay.date);
+            setQuickTitle(lastDay.title);
+            setQuickContent(lastDay.content);
+            setQuickHours(lastDay.hours);
+            setQuickCooperation(lastDay.cooperation);
+            setQuickDifficulty(lastDay.difficulty);
+          }
+        }
+      } else {
+        showToast(`导入失败，失败条数: ${failCount}`, 'error');
+      }
+    } catch (e: any) {
+      showToast(`批量导入发生异常: ${e.message}`, 'error');
+    } finally {
+      setIsImporting(false);
+    }
+  };
+
   const getStatistics = () => {
     let missingCount = 0;
     let urgencyCount = 0;
+    let filledCount = 0;
 
-    // 检查滚动窗口内的每一个非周末日期
     for (let i = 0; i < rollingDays; i++) {
       const date = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
       const dateStr = formatDateStr(date);
       const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-      const hasLog = !!appData.logs[dateStr];
+      const hasLog = !!logs[dateStr];
 
+      if (hasLog) filledCount++;
       if (!isWeekend && !hasLog) {
         missingCount++;
-        // 如果是最后的补录期限（剩 0, 1, 2 天过期）
         if ((rollingDays - 1 - i) <= 2) {
           urgencyCount++;
         }
       }
     }
 
-    return { missingCount, urgencyCount };
+    return { missingCount, urgencyCount, filledCount };
   };
 
   const getMissingDays = (): { dateStr: string; dayName: string; daysLeftToFill: number }[] => {
@@ -251,7 +329,7 @@ export default function HistoryCalendar({
       const date = new Date(today.getTime() - i * 24 * 60 * 60 * 1000);
       const dateStr = formatDateStr(date);
       const isWeekend = date.getDay() === 0 || date.getDay() === 6;
-      const hasLog = !!appData.logs[dateStr];
+      const hasLog = !!logs[dateStr];
 
       if (!isWeekend && !hasLog) {
         list.push({
@@ -261,49 +339,60 @@ export default function HistoryCalendar({
         });
       }
     }
-    return list.reverse(); // 从旧到新排列，最紧急的排最前面
+    return list.reverse();
   };
 
   const stats = getStatistics();
   const missingDays = getMissingDays();
 
+  // 隐藏文件上传 input
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1 }}>
-      {/* 绩效看板状态栏 */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '22px', flex: 1 }}>
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileSelect}
+        accept=".xlsx, .xls, .csv"
+        style={{ display: 'none' }}
+      />
+
+      {/* 苹果 Bento 看板状态栏 */}
       <div
-        className="glass-panel monitor-board"
+        className="liquid-glass-card"
         style={{
-          padding: '16px 24px',
+          padding: '20px 24px',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'flex-start',
+          alignItems: 'center',
           flexWrap: 'wrap',
-          gap: '16px',
-          borderLeft: stats.missingCount > 0 ? '4px solid #EF4444' : '4px solid #10B981',
-          background: 'rgba(255, 255, 255, 0.02)'
+          gap: '18px',
+          borderLeft: stats.missingCount > 0 ? '4px solid #EF4444' : '4px solid #10B981'
         }}
       >
-        <div style={{ minWidth: '280px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: '800' }}>7天滚动补录监控看板</h2>
-          <p style={{ fontSize: '13px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-            根据公司考勤标准，滚动 7 天窗口期为：
-            <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>
+        <div style={{ minWidth: '260px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+            <CalendarIcon size={18} color="var(--accent-color)" />
+            <h2 style={{ fontSize: '17px', fontWeight: '800' }}>工时与事项归档监控看板</h2>
+          </div>
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            归档统计周期：
+            <span style={{ fontWeight: '700', color: 'var(--text-primary)' }}>
               {formatDateStr(sevenDaysAgo)}
             </span>{' '}
             至{' '}
-            <span style={{ fontWeight: '600', color: 'var(--text-primary)' }}>
+            <span style={{ fontWeight: '700', color: 'var(--text-primary)' }}>
               {formatDateStr(today)}
-            </span>。
+            </span>
           </p>
         </div>
 
-        {/* 漏填列表快速导航区 */}
+        {/* 漏填快速胶囊导航 */}
         {missingDays.length > 0 && (
-          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '6px', minWidth: '320px', borderLeft: '1px solid var(--glass-border)', paddingLeft: '20px' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px', minWidth: '260px' }}>
             <span style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>
-              🔍 漏填补录导航（含跨月）：
+              待归档事项快捷通道:
             </span>
-            <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
               {missingDays.map((day) => {
                 const isSelected = selectedDateStr === day.dateStr;
                 const isUrgent = day.daysLeftToFill <= 2;
@@ -312,28 +401,37 @@ export default function HistoryCalendar({
                     key={day.dateStr}
                     onClick={() => {
                       setSelectedDateStr(day.dateStr);
-                      setQuickTitle('');
-                      setQuickContent('');
-                      setQuickHours(8);
-                      setQuickCooperation(false);
-                      setQuickDifficulty(false);
+                      if (logs[day.dateStr]) {
+                        const l = logs[day.dateStr];
+                        setQuickTitle(l.title || '');
+                        setQuickContent(l.content || '');
+                        setQuickHours(l.hours || 8);
+                        setQuickCooperation(!!l.cooperation);
+                        setQuickDifficulty(!!l.difficulty);
+                      } else {
+                        setQuickTitle('');
+                        setQuickContent('');
+                        setQuickHours(8);
+                        setQuickCooperation(false);
+                        setQuickDifficulty(false);
+                      }
                     }}
                     className="clickable"
                     style={{
-                      padding: '5px 10px',
-                      borderRadius: '6px',
+                      padding: '6px 12px',
+                      borderRadius: '10px',
                       fontSize: '11px',
-                      fontWeight: '600',
+                      fontWeight: '700',
                       background: isSelected
                         ? 'var(--accent-gradient)'
                         : isUrgent
-                        ? 'rgba(239, 68, 68, 0.1)'
-                        : 'rgba(245, 158, 11, 0.1)',
+                        ? 'rgba(239, 68, 68, 0.12)'
+                        : 'rgba(245, 158, 11, 0.12)',
                       border: isSelected
-                        ? '1px solid transparent'
+                        ? '1px solid rgba(255,255,255,0.3)'
                         : isUrgent
-                        ? '1px solid rgba(239, 68, 68, 0.4)'
-                        : '1px solid rgba(245, 158, 11, 0.4)',
+                        ? '1px solid rgba(239, 68, 68, 0.35)'
+                        : '1px solid rgba(245, 158, 11, 0.35)',
                       color: isSelected
                         ? '#ffffff'
                         : isUrgent
@@ -341,13 +439,13 @@ export default function HistoryCalendar({
                         : '#F59E0B',
                       display: 'flex',
                       alignItems: 'center',
-                      gap: '4px',
-                      boxShadow: isSelected ? '0 2px 8px rgba(79, 70, 229, 0.2)' : 'none'
+                      gap: '6px',
+                      boxShadow: isSelected ? '0 4px 12px var(--accent-glow)' : 'none'
                     }}
                   >
                     <span>{day.dateStr.substring(5)} ({day.dayName})</span>
-                    <span style={{ fontSize: '9px', opacity: 0.8 }}>
-                      ({day.daysLeftToFill <= 0 ? '今天过期' : `剩 ${day.daysLeftToFill} 天`})
+                    <span style={{ fontSize: '10px', opacity: 0.85 }}>
+                      ({day.daysLeftToFill <= 0 ? '今日截止' : `剩 ${day.daysLeftToFill} 天`})
                     </span>
                   </button>
                 );
@@ -357,44 +455,95 @@ export default function HistoryCalendar({
         )}
 
         <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
+          {/* 🌟 核心新功能：一键导入任务日志 Excel 按钮 🌟 */}
+          <button
+            onClick={() => fileInputRef.current?.click()}
+            className="clickable"
+            style={{
+              padding: '10px 18px',
+              borderRadius: '12px',
+              background: 'var(--glass-surface-subtle)',
+              border: '1px solid var(--glass-border)',
+              color: 'var(--text-primary)',
+              fontSize: '13px',
+              fontWeight: '700',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              boxShadow: '0 4px 14px rgba(0,0,0,0.06)'
+            }}
+            title="支持上传后台导出的任务列表 Excel，一键覆盖同步至对应工作日"
+          >
+            <FileSpreadsheet size={16} color="var(--accent-color)" />
+            <span>一键导入任务清单 (Excel)</span>
+          </button>
+
           <div style={{ textAlign: 'right' }}>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>漏记漏填天数：</span>
-            <span
-              style={{
-                fontSize: '22px',
-                fontWeight: '800',
-                color: stats.missingCount > 0 ? '#EF4444' : '#10B981'
-              }}
-            >
-              {stats.missingCount}
-            </span>
-            <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}> 天</span>
+            <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>待归档天数</div>
+            <div style={{
+              fontSize: '22px',
+              fontWeight: '800',
+              color: stats.missingCount > 0 ? '#EF4444' : '#10B981',
+              lineHeight: '1.2'
+            }}>
+              {stats.missingCount} <span style={{ fontSize: '12px', fontWeight: '500', color: 'var(--text-muted)' }}>天</span>
+            </div>
           </div>
           {stats.urgencyCount > 0 && (
             <div
               style={{
-                background: 'rgba(239, 68, 68, 0.1)',
-                padding: '6px 12px',
-                borderRadius: '8px',
+                background: 'rgba(239, 68, 68, 0.12)',
+                border: '1px solid rgba(239, 68, 68, 0.3)',
+                padding: '8px 12px',
+                borderRadius: '12px',
                 color: '#EF4444',
                 fontSize: '12px',
-                fontWeight: '600',
+                fontWeight: '700',
                 display: 'flex',
                 alignItems: 'center',
                 gap: '6px'
               }}
             >
-              <AlertCircle size={14} />
-              <span>有 {stats.urgencyCount} 天即将过期！</span>
+              <AlertCircle size={15} />
+              <span>{stats.urgencyCount} 天临期</span>
             </div>
           )}
         </div>
       </div>
 
       <div className="two-col-layout">
-        {/* 左侧：日历主体 */}
-        <div className="glass-panel two-col-left" style={{ padding: '24px' }}>
-          {/* 日历头部 */}
+        {/* 左侧：日历 42 单元格矩阵 (支持拖拽 Excel 上传) */}
+        <div
+          className="liquid-glass-card two-col-left"
+          onDragOver={(e) => { e.preventDefault(); setIsDragOver(true); }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={handleDrop}
+          style={{
+            padding: '24px',
+            position: 'relative',
+            border: isDragOver ? '2px dashed var(--accent-color)' : undefined
+          }}
+        >
+          {isDragOver && (
+            <div style={{
+              position: 'absolute',
+              inset: 0,
+              background: 'rgba(99, 102, 241, 0.2)',
+              backdropFilter: 'blur(8px)',
+              borderRadius: '24px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '12px',
+              zIndex: 20
+            }}>
+              <Upload size={40} color="var(--accent-color)" />
+              <div style={{ fontSize: '16px', fontWeight: '800', color: '#fff' }}>释放鼠标即可解析 Excel 文件并一键覆盖导入</div>
+            </div>
+          )}
+
+          {/* 日历导航头部 */}
           <div
             style={{
               display: 'flex',
@@ -403,17 +552,20 @@ export default function HistoryCalendar({
               marginBottom: '20px'
             }}
           >
-            <h3 style={{ fontSize: '18px', fontWeight: '700' }}>
-              {year} 年 {month + 1} 月
-            </h3>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <h3 style={{ fontSize: '18px', fontWeight: '800', margin: 0 }}>
+                {year} 年 {month + 1} 月
+              </h3>
+            </div>
+            
             <div style={{ display: 'flex', gap: '8px' }}>
               <button
                 onClick={handlePrevMonth}
                 className="clickable"
                 style={{
-                  padding: '6px',
-                  borderRadius: '6px',
-                  background: 'rgba(255,255,255,0.05)',
+                  padding: '8px 12px',
+                  borderRadius: '10px',
+                  background: 'var(--glass-surface-subtle)',
                   border: '1px solid var(--glass-border)',
                   color: 'var(--text-primary)'
                 }}
@@ -424,9 +576,9 @@ export default function HistoryCalendar({
                 onClick={handleNextMonth}
                 className="clickable"
                 style={{
-                  padding: '6px',
-                  borderRadius: '6px',
-                  background: 'rgba(255,255,255,0.05)',
+                  padding: '8px 12px',
+                  borderRadius: '10px',
+                  background: 'var(--glass-surface-subtle)',
                   border: '1px solid var(--glass-border)',
                   color: 'var(--text-primary)'
                 }}
@@ -442,135 +594,90 @@ export default function HistoryCalendar({
               display: 'grid',
               gridTemplateColumns: 'repeat(7, 1fr)',
               textAlign: 'center',
-              marginBottom: '10px',
-              fontWeight: '600',
+              marginBottom: '12px',
+              fontWeight: '700',
               fontSize: '12px',
               color: 'var(--text-muted)'
             }}
           >
-            <div>一</div>
-            <div>二</div>
-            <div>三</div>
-            <div>四</div>
-            <div>五</div>
-            <div style={{ color: '#F59E0B' }}>六</div>
-            <div style={{ color: '#F59E0B' }}>日</div>
+            <div>一</div><div>二</div><div>三</div><div>四</div><div>五</div><div>六</div><div>日</div>
           </div>
 
-          {/* 日期网格 */}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(7, 1fr)', gap: '8px' }}>
-            {calendarCells.map((cell, index) => {
-              const cellDateStr = formatDateStr(cell.date);
+          {/* 42 格矩阵 */}
+          <div className="calendar-grid">
+            {calendarCells.map((cell, idx) => {
               const status = getDateStatus(cell.date);
-              const isSelected = selectedDateStr === cellDateStr;
+              const dateStr = formatDateStr(cell.date);
+              const isSelected = selectedDateStr === dateStr;
+              const isToday = formatDateStr(today) === dateStr;
 
-              // 网格基础背景色与边框
-              let border = '1px solid var(--glass-border)';
-              let background = 'rgba(255,255,255,0.01)';
-              const opacity = cell.isCurrentMonth ? 1 : 0.4;
-              let cursor = 'pointer';
+              let cellBg = 'var(--glass-surface-subtle)';
+              let borderColor = 'var(--glass-border-subtle)';
+              let textColor = cell.isCurrentMonth ? 'var(--text-primary)' : 'var(--text-muted)';
 
-              if (status.isFuture) {
-                border = '1px dashed var(--glass-border)';
-                background = 'transparent';
-                cursor = 'not-allowed';
-              } else if (isSelected) {
-                border = '2px solid var(--accent-color)';
-                background = 'rgba(59, 130, 246, 0.08)';
-              } else if (status.hasLog) {
-                background = 'rgba(16, 185, 129, 0.04)';
+              if (status.hasLog) {
+                cellBg = 'rgba(16, 185, 129, 0.12)';
+                borderColor = 'rgba(16, 185, 129, 0.3)';
               } else if (status.inWindow && !status.isWeekend) {
-                // 可补填且未填：高亮警示
-                background = status.daysLeftToFill <= 2 
-                  ? 'rgba(239, 68, 68, 0.05)'  // 紧急红色
-                  : 'rgba(245, 158, 11, 0.05)'; // 警告黄色
-                border = status.daysLeftToFill <= 2
-                  ? '1px solid rgba(239, 68, 68, 0.3)'
-                  : '1px solid rgba(245, 158, 11, 0.3)';
+                cellBg = 'rgba(245, 158, 11, 0.12)';
+                borderColor = 'rgba(245, 158, 11, 0.35)';
+              }
+
+              if (isSelected) {
+                cellBg = 'var(--accent-gradient)';
+                borderColor = 'rgba(255, 255, 255, 0.4)';
+                textColor = '#ffffff';
               }
 
               return (
                 <div
-                  key={index}
+                  key={idx}
                   onClick={() => handleSelectDate(cell.date)}
-                  className={status.isFuture ? '' : 'clickable'}
+                  className={`clickable ${status.isFuture ? '' : 'cursor-pointer'}`}
                   style={{
-                    height: '80px',
+                    minHeight: '64px',
                     padding: '8px',
-                    borderRadius: '10px',
-                    border,
-                    background,
-                    opacity,
-                    cursor,
+                    borderRadius: '12px',
+                    background: cellBg,
+                    border: `1px solid ${borderColor}`,
+                    color: textColor,
+                    opacity: status.isFuture ? 0.35 : cell.isCurrentMonth ? 1 : 0.6,
                     display: 'flex',
                     flexDirection: 'column',
                     justifyContent: 'space-between',
                     position: 'relative',
-                    overflow: 'hidden'
+                    cursor: status.isFuture ? 'not-allowed' : 'pointer',
+                    boxShadow: isSelected ? '0 8px 20px var(--accent-glow)' : 'none'
                   }}
                 >
-                  {/* 日期号 */}
-                  <div
-                    style={{
-                      display: 'flex',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      fontSize: '14px',
-                      fontWeight: '700'
-                    }}
-                  >
-                    <span style={{ color: status.isWeekend ? '#F59E0B' : 'var(--text-primary)', fontSize: cell.isCurrentMonth ? '14px' : '11px' }}>
-                      {cell.isCurrentMonth
-                        ? (cell.date.getDate() === 1 ? `${cell.date.getMonth() + 1}/${cell.date.getDate()}` : cell.date.getDate())
-                        : `${cell.date.getMonth() + 1}/${cell.date.getDate()}`
-                      }
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ fontSize: '13px', fontWeight: isToday ? '800' : '600' }}>
+                      {cell.date.getDate()}
                     </span>
-
-                    {/* 状态徽标 */}
-                    {status.hasLog ? (
-                      <CheckCircle2 size={14} color="#10B981" />
-                    ) : status.isFuture ? null : status.isWeekend ? (
-                      <Coffee size={14} color="var(--text-muted)" />
-                    ) : status.inWindow ? (
-                      <AlertCircle
-                        size={14}
-                        color={status.daysLeftToFill <= 2 ? '#EF4444' : '#F59E0B'}
-                        style={{ animation: 'pulse-slow 2s infinite' }}
-                      />
-                    ) : (
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>-</span>
+                    {isToday && (
+                      <span style={{
+                        fontSize: '9px',
+                        padding: '1px 5px',
+                        borderRadius: '6px',
+                        background: isSelected ? 'rgba(255,255,255,0.3)' : 'var(--accent-color)',
+                        color: '#fff',
+                        fontWeight: '700'
+                      }}>
+                        今
+                      </span>
                     )}
                   </div>
 
-                  {/* 日历单元格内容缩略 */}
-                  <div
-                    style={{
-                      fontSize: '10px',
-                      color: 'var(--text-secondary)',
-                      textOverflow: 'ellipsis',
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      marginTop: '4px'
-                    }}
-                  >
+                  <div style={{ fontSize: '10px', marginTop: '4px' }}>
                     {status.hasLog ? (
-                      appData.logs[cellDateStr].title
-                    ) : status.isFuture ? (
-                      ''
-                    ) : status.isWeekend ? (
-                      '休息'
-                    ) : status.inWindow ? (
-                      <span
-                        style={{
-                          fontWeight: '600',
-                          color: status.daysLeftToFill <= 2 ? '#EF4444' : '#F59E0B'
-                        }}
-                      >
-                        余 {status.daysLeftToFill} 天过期
+                      <span style={{ color: isSelected ? '#fff' : '#10B981', display: 'flex', alignItems: 'center', gap: '2px', fontWeight: '700' }}>
+                        <CheckCircle2 size={10} /> 已填
                       </span>
-                    ) : (
-                      '已过期'
-                    )}
+                    ) : status.inWindow && !status.isWeekend ? (
+                      <span style={{ color: isSelected ? '#fff' : '#F59E0B', fontWeight: '700' }}>
+                        待归档
+                      </span>
+                    ) : null}
                   </div>
                 </div>
               );
@@ -578,188 +685,50 @@ export default function HistoryCalendar({
           </div>
         </div>
 
-        {/* 右侧：补录/详情卡片 */}
-        <div
-          className="glass-panel two-col-right"
-          style={{
-            padding: '24px',
-            display: 'flex',
-            flexDirection: 'column',
-            gap: '16px'
-          }}
-        >
+        {/* 右侧：补录/查看详情工作台 */}
+        <div className="liquid-glass-card two-col-right" style={{ padding: '26px 24px' }}>
           {selectedDateStr ? (
-            <>
-              {/* 日期及基本提示 */}
-              <div
-                style={{
-                  borderBottom: '1px solid var(--glass-border)',
-                  paddingBottom: '12px',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center'
-                }}
-              >
-                <div>
-                  <h3 style={{ fontSize: '16px', fontWeight: '700' }}>{selectedDateStr} 详情</h3>
-                  <p style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
-                    {appData.logs[selectedDateStr] ? '该日期已存在日志，可查看或删除。' : '该日期无记录，请在下方录入或补录。'}
-                  </p>
-                </div>
-                {appData.logs[selectedDateStr] && (
-                  <button
-                    onClick={handleQuickDelete}
-                    className="clickable"
-                    style={{
-                      padding: '6px 12px',
-                      borderRadius: '6px',
-                      background: 'rgba(239, 68, 68, 0.1)',
-                      color: '#EF4444',
-                      fontSize: '12px',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                      fontWeight: '600'
-                    }}
-                  >
-                    <Trash2 size={13} />
-                    <span>删除</span>
-                  </button>
-                )}
-              </div>
-
-              {/* 表单展示与录入 */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
-                {/* 日志标题 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#EAB308' }}>日志名称</label>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <input
-                      type="text"
-                      maxLength={30}
-                      value={quickTitle}
-                      onChange={(e) => setQuickTitle(e.target.value)}
-                      placeholder="例如：日常前端开发代码维护"
-                      style={{ flex: 1 }}
-                    />
-                    <button
-                      onClick={() => copyText(quickTitle, 'title')}
-                      className="clickable"
-                      style={{ padding: '8px', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--glass-border)', borderRadius: '8px', color: 'var(--text-secondary)' }}
-                    >
-                      {copiedField === 'title' ? <Check size={14} color="#10B981" /> : <Copy size={14} />}
-                    </button>
-                  </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '18px', height: '100%' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--glass-border-subtle)', paddingBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <CalendarIcon size={18} color="var(--accent-color)" />
+                  <h3 style={{ fontSize: '16px', fontWeight: '800' }}>
+                    {selectedDateStr} 事项详情与归档
+                  </h3>
                 </div>
 
-                {/* 工时、协作、难点并排 */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '8px', alignItems: 'center' }}>
-                  <div>
-                    <label style={{ fontSize: '11px', fontWeight: '600', color: '#EAB308', display: 'block', marginBottom: '4px' }}>工时(h)</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={24}
-                      value={quickHours}
-                      onChange={(e) => setQuickHours(Number(e.target.value))}
-                      style={{ width: '100%' }}
-                    />
-                  </div>
-                  <div style={{ textAlign: 'center', marginTop: '16px' }}>
-                    <input
-                      type="checkbox"
-                      id="q_cooperation"
-                      checked={quickCooperation}
-                      onChange={(e) => setQuickCooperation(e.target.checked)}
-                      style={{ marginRight: '4px', cursor: 'pointer' }}
-                    />
-                    <label htmlFor="q_cooperation" style={{ fontSize: '11px', color: 'var(--text-primary)', cursor: 'pointer' }}>协作</label>
-                  </div>
-                  <div style={{ textAlign: 'center', marginTop: '16px' }}>
-                    <input
-                      type="checkbox"
-                      id="q_difficulty"
-                      checked={quickDifficulty}
-                      onChange={(e) => setQuickDifficulty(e.target.checked)}
-                      style={{ marginRight: '4px', cursor: 'pointer' }}
-                    />
-                    <label htmlFor="q_difficulty" style={{ fontSize: '11px', color: 'var(--text-primary)', cursor: 'pointer' }}>难点</label>
-                  </div>
-                </div>
-
-                {/* 日志内容 */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
-                  <label style={{ fontSize: '12px', fontWeight: '600', color: '#EAB308' }}>日志内容</label>
-                  <div style={{ position: 'relative', display: 'flex', flex: 1 }}>
-                    <textarea
-                      maxLength={3000}
-                      value={quickContent}
-                      onChange={(e) => setQuickContent(e.target.value)}
-                      placeholder="在此输入详细工作，或在下方点击一键补录"
-                      style={{
-                        width: '100%',
-                        resize: 'none',
-                        fontSize: '13px',
-                        lineHeight: '1.5',
-                        minHeight: '160px'
-                      }}
-                    />
-                    <button
-                      onClick={() => copyText(quickContent, 'content')}
-                      className="clickable"
-                      style={{
-                        position: 'absolute',
-                        right: '8px',
-                        top: '8px',
-                        padding: '6px',
-                        background: 'rgba(0,0,0,0.6)',
-                        border: '1px solid var(--glass-border)',
-                        borderRadius: '6px',
-                        color: '#ffffff'
-                      }}
-                    >
-                      {copiedField === 'content' ? <Check size={12} color="#10B981" /> : <Copy size={12} />}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* 动作按钮组 */}
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  borderTop: '1px solid var(--glass-border)',
-                  paddingTop: '12px'
-                }}
-              >
-                {!appData.logs[selectedDateStr] ? (
-                  <>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  {!logs[selectedDateStr] && (
                     <button
                       onClick={handleQuickAutoGenerate}
                       className="clickable"
                       style={{
-                        padding: '8px 12px',
-                        borderRadius: '8px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid var(--glass-border)',
-                        color: 'var(--text-primary)',
+                        padding: '7px 12px',
+                        borderRadius: '10px',
+                        background: 'var(--accent-gradient)',
+                        color: '#fff',
                         fontSize: '12px',
+                        fontWeight: '700',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '4px'
+                        gap: '6px',
+                        boxShadow: '0 4px 12px var(--accent-glow)'
                       }}
                     >
-                      <span>⚡ 自动补填</span>
+                      <Sparkles size={14} />
+                      <span>载入默认事项</span>
                     </button>
+                  )}
+                  {logs[selectedDateStr] && (
                     <button
-                      onClick={handleQuickSave}
+                      onClick={handleQuickDelete}
                       className="clickable"
                       style={{
-                        padding: '8px 16px',
-                        borderRadius: '8px',
-                        background: 'var(--accent-gradient)',
-                        color: '#ffffff',
+                        padding: '7px 12px',
+                        borderRadius: '10px',
+                        background: 'rgba(239, 68, 68, 0.12)',
+                        border: '1px solid rgba(239, 68, 68, 0.3)',
+                        color: '#EF4444',
                         fontSize: '12px',
                         fontWeight: '600',
                         display: 'flex',
@@ -767,90 +736,347 @@ export default function HistoryCalendar({
                         gap: '4px'
                       }}
                     >
-                      <span>保存补录</span>
+                      <Trash2 size={14} />
+                      <span>删除</span>
                     </button>
-                  </>
-                ) : (
-                  <div style={{ width: '100%', display: 'flex', justifyContent: 'space-between' }}>
-                    <button
-                      onClick={() => {
-                        const text = `日志名称：${quickTitle}\n工时(h)：${quickHours}\n日志日期：${selectedDateStr}\n部门协作：${quickCooperation ? '是' : '否'}\n工作难点：${quickDifficulty ? '是' : '否'}\n日志内容：\n${quickContent}`;
-                        copyText(text, 'all_info');
-                      }}
-                      className="clickable"
-                      style={{
-                        padding: '8px 12px',
-                        borderRadius: '8px',
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid var(--glass-border)',
-                        color: 'var(--text-primary)',
-                        fontSize: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {copiedField === 'all_info' ? <Check size={13} color="#10B981" /> : <Copy size={13} />}
-                      <span>{copiedField === 'all_info' ? '已复制' : '复制整单数据'}</span>
-                    </button>
-                    <button
-                      onClick={handleQuickSave}
-                      className="clickable"
-                      style={{
-                        padding: '8px 16px',
-                        borderRadius: '8px',
-                        background: 'var(--accent-gradient)',
-                        color: '#ffffff',
-                        fontSize: '12px',
-                        fontWeight: '600'
-                      }}
-                    >
-                      <span>修改并存盘</span>
-                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* 表单字段 */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <label style={{ width: '80px', fontSize: '13px', fontWeight: '700', color: 'var(--accent-color)', textAlign: 'right' }}>事项名称:</label>
+                  <div style={{ flex: 1, display: 'flex', gap: '8px' }}>
+                    <input
+                      type="text"
+                      value={quickTitle}
+                      onChange={(e) => setQuickTitle(e.target.value)}
+                      placeholder="填写工作事项名称..."
+                      style={{ flex: 1 }}
+                    />
+                    {quickTitle && (
+                      <button
+                        onClick={() => copyText(quickTitle, 'title')}
+                        className="clickable"
+                        style={{
+                          padding: '10px',
+                          background: 'var(--glass-surface-subtle)',
+                          border: '1px solid var(--glass-border)',
+                          borderRadius: '10px',
+                          color: 'var(--text-secondary)'
+                        }}
+                      >
+                        {copiedField === 'title' ? <Check size={14} color="#10B981" /> : <Copy size={14} />}
+                      </button>
+                    )}
                   </div>
-                )}
+                </div>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                  <label style={{ width: '80px', fontSize: '13px', fontWeight: '700', color: 'var(--accent-color)', textAlign: 'right' }}>工时(h):</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={24}
+                    value={quickHours}
+                    onChange={(e) => setQuickHours(Number(e.target.value))}
+                    style={{ maxWidth: '140px' }}
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
+                  <label style={{ width: '80px', fontSize: '13px', fontWeight: '700', color: 'var(--accent-color)', textAlign: 'right' }}>工作事项内容:</label>
+                  <div style={{ position: 'relative', flex: 1, display: 'flex' }}>
+                    <textarea
+                      value={quickContent}
+                      onChange={(e) => setQuickContent(e.target.value)}
+                      placeholder="填写工作事项内容流水..."
+                      style={{
+                        flex: 1,
+                        resize: 'none',
+                        lineHeight: '1.7',
+                        minHeight: '160px'
+                      }}
+                    />
+                    {quickContent && (
+                      <button
+                        onClick={() => copyText(quickContent, 'content')}
+                        className="clickable"
+                        style={{
+                          position: 'absolute',
+                          right: '10px',
+                          top: '10px',
+                          padding: '8px',
+                          background: 'rgba(15, 23, 42, 0.7)',
+                          border: '1px solid var(--glass-border)',
+                          borderRadius: '8px',
+                          color: '#ffffff',
+                          backdropFilter: 'blur(8px)'
+                        }}
+                      >
+                        {copiedField === 'content' ? <Check size={14} color="#10B981" /> : <Copy size={14} />}
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
-            </>
+
+              {/* 底部保存按钮 */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--glass-border-subtle)', paddingTop: '14px' }}>
+                <button
+                  onClick={handleQuickSave}
+                  className="clickable"
+                  style={{
+                    padding: '11px 22px',
+                    borderRadius: '12px',
+                    background: 'var(--accent-gradient)',
+                    color: '#ffffff',
+                    fontSize: '13px',
+                    fontWeight: '700',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    boxShadow: '0 8px 24px var(--accent-glow)'
+                  }}
+                >
+                  <Save size={15} />
+                  <span>保存事项</span>
+                </button>
+              </div>
+            </div>
           ) : (
-            <div
-              style={{
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--text-muted)',
-                textAlign: 'center',
-                gap: '12px',
-                padding: '24px'
-              }}
-            >
-              <HelpCircle size={40} style={{ opacity: 0.5 }} />
-              <div>
-                <h4 style={{ color: 'var(--text-primary)', fontSize: '15px' }}>选择日期查看详情</h4>
-                <p style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: '4px' }}>
-                  点击左侧日历中任何已记录（绿勾）或漏填（黄/红叹号）的日期，即可在此处查看详情、复制或者一键补录。
-                </p>
+            <div style={{
+              height: '100%',
+              minHeight: '280px',
+              display: 'flex',
+              flexDirection: 'column',
+              alignItems: 'center',
+              justifyContent: 'center',
+              color: 'var(--text-muted)',
+              gap: '12px',
+              textAlign: 'center'
+            }}>
+              <CalendarIcon size={36} color="var(--text-muted)" opacity={0.5} />
+              <div style={{ fontSize: '14px', fontWeight: '600' }}>请在左侧日历点击选择任意一天</div>
+              <div style={{ fontSize: '12px', maxWidth: '280px', lineHeight: 1.6 }}>
+                支持快速查看历史日志、跨月补填漏报日报，或一键导入 Excel 任务。
               </div>
-              <button
-                onClick={onNavigateToGenerator}
-                className="clickable"
-                style={{
-                  marginTop: '12px',
-                  padding: '8px 16px',
-                  borderRadius: '8px',
-                  background: 'var(--accent-gradient)',
-                  color: '#ffffff',
-                  fontSize: '12px',
-                  fontWeight: '600'
-                }}
-              >
-                去写今日日报
-              </button>
             </div>
           )}
         </div>
       </div>
+
+      {/* 🌟 visionOS 悬浮液态模态框：Excel 批量导入确认 🌟 */}
+      {importModalOpen && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(16px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 9999,
+          padding: '20px'
+        }}>
+          <div
+            className="liquid-glass-card"
+            style={{
+              width: '100%',
+              maxWidth: '560px',
+              padding: '28px',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '20px',
+              borderRadius: '24px',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.5)',
+              maxHeight: '85vh',
+              overflow: 'hidden'
+            }}
+          >
+            {/* 模态框头部 */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <div style={{
+                  width: '36px',
+                  height: '36px',
+                  borderRadius: '10px',
+                  background: 'var(--accent-gradient)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 4px 12px var(--accent-glow)'
+                }}>
+                  <FileSpreadsheet size={20} color="#fff" />
+                </div>
+                <div>
+                  <h3 style={{ fontSize: '17px', fontWeight: '800', margin: 0 }}>工作事项清单 Excel 解析确认</h3>
+                  <p style={{ fontSize: '12px', color: 'var(--text-secondary)', margin: 0, marginTop: '2px' }}>
+                    已成功解析待导入的实际工作任务清单
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => !isImporting && setImportModalOpen(false)}
+                className="clickable"
+                style={{
+                  padding: '6px',
+                  borderRadius: '8px',
+                  background: 'var(--glass-surface-subtle)',
+                  border: '1px solid var(--glass-border)',
+                  color: 'var(--text-secondary)'
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            {/* 统计指标看板 */}
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, 1fr)',
+              gap: '10px',
+              background: 'var(--glass-surface-subtle)',
+              padding: '14px',
+              borderRadius: '14px',
+              border: '1px solid var(--glass-border)'
+            }}>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>解析工作日天数</div>
+                <div style={{ fontSize: '20px', fontWeight: '800', color: 'var(--accent-color)', marginTop: '2px' }}>
+                  {parsedImportDays.length} <span style={{ fontSize: '11px', fontWeight: '500' }}>天</span>
+                </div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>覆盖工时累计</div>
+                <div style={{ fontSize: '20px', fontWeight: '800', color: '#10B981', marginTop: '2px' }}>
+                  {Math.round(parsedImportDays.reduce((sum, d) => sum + d.hours, 0) * 10) / 10} <span style={{ fontSize: '11px', fontWeight: '500' }}>h</span>
+                </div>
+              </div>
+              <div style={{ textAlign: 'center' }}>
+                <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>覆盖模式</div>
+                <div style={{ fontSize: '13px', fontWeight: '800', color: '#F59E0B', marginTop: '6px' }}>
+                  直接覆盖已有
+                </div>
+              </div>
+            </div>
+
+            {/* 警告提示 */}
+            <div style={{
+              background: 'rgba(245, 158, 11, 0.08)',
+              border: '1px solid rgba(245, 158, 11, 0.25)',
+              padding: '10px 14px',
+              borderRadius: '10px',
+              fontSize: '12px',
+              color: '#F59E0B',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px'
+            }}>
+              <AlertCircle size={15} />
+              <span>导入后将以 Excel 为准，直接覆盖对应日期的历史日志内容。</span>
+            </div>
+
+            {/* 解析预览列表 */}
+            <div style={{
+              flex: 1,
+              overflowY: 'auto',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px',
+              paddingRight: '4px',
+              maxHeight: '220px'
+            }}>
+              {parsedImportDays.map((d, i) => (
+                <div
+                  key={d.date || i}
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: '10px',
+                    background: 'var(--glass-surface-subtle)',
+                    border: '1px solid var(--glass-border-subtle)',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '12px'
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
+                    <span style={{ fontWeight: '800', color: 'var(--accent-color)' }}>{d.date}</span>
+                    <span style={{ color: 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '300px' }}>
+                      {d.title}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: 'var(--text-muted)', fontSize: '11px', flexShrink: 0 }}>
+                    <Clock size={11} />
+                    <span>{d.hours}h</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* 导入进度条 */}
+            {isImporting && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', color: 'var(--text-secondary)' }}>
+                  <span>正在批量写入数据库...</span>
+                  <span>{importProgress.current} / {importProgress.total}</span>
+                </div>
+                <div style={{ width: '100%', height: '6px', background: 'var(--glass-surface-subtle)', borderRadius: '4px', overflow: 'hidden' }}>
+                  <div style={{
+                    width: `${(importProgress.current / (importProgress.total || 1)) * 100}%`,
+                    height: '100%',
+                    background: 'var(--accent-gradient)',
+                    transition: 'width 0.1s ease'
+                  }} />
+                </div>
+              </div>
+            )}
+
+            {/* 模态框底部操作 */}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--glass-border-subtle)', paddingTop: '16px' }}>
+              <button
+                onClick={() => setImportModalOpen(false)}
+                disabled={isImporting}
+                className="clickable"
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: '10px',
+                  background: 'var(--glass-surface-subtle)',
+                  border: '1px solid var(--glass-border)',
+                  color: 'var(--text-primary)',
+                  fontSize: '13px',
+                  fontWeight: '600'
+                }}
+              >
+                取消
+              </button>
+              <button
+                onClick={handleConfirmBatchImport}
+                disabled={isImporting}
+                className="clickable glow-btn"
+                style={{
+                  padding: '9px 22px',
+                  borderRadius: '10px',
+                  background: 'var(--accent-gradient)',
+                  color: '#fff',
+                  fontSize: '13px',
+                  fontWeight: '800',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  boxShadow: '0 4px 16px var(--accent-glow)',
+                  cursor: isImporting ? 'not-allowed' : 'pointer'
+                }}
+              >
+                <span>{isImporting ? '正在批量覆盖导入...' : '确认覆盖导入'}</span>
+                <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

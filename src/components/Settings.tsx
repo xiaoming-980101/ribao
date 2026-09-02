@@ -1,5 +1,17 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Settings as SettingsIcon, ShieldAlert, Download, Upload, Check, Save, Trash2, Cpu, RefreshCw } from 'lucide-react';
+import {
+  Settings as SettingsIcon,
+  Download,
+  Upload,
+  Check,
+  Save,
+  Trash2,
+  Cpu,
+  RefreshCw,
+  Search,
+  ChevronDown,
+  ChevronUp
+} from 'lucide-react';
 import {
   AppData,
   saveSettings,
@@ -23,36 +35,16 @@ interface SettingsProps {
   showToast: (msg: string, type?: 'success' | 'error' | 'info') => void;
 }
 
-// 智能识别核心免费推荐大模型 (对中文大白话生成效果最佳且免费的型号)
-const checkIsRecommended = (m: { id: string; name: string; isFree: boolean }) => {
-  const idLower = m.id.toLowerCase();
-  
-  // 必须是免费模型，且符合我们推荐的关键型号
-  if (m.isFree) {
-    // 1. Qwen 3 Coder 系列 (包含 qwen, 3, coder)
-    if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('coder')) {
-      return true;
-    }
-    // 2. Qwen 3 Next 系列 (包含 qwen, 3, next)
-    if (idLower.includes('qwen') && idLower.includes('3') && idLower.includes('next')) {
-      return true;
-    }
-    // 3. Llama 3.3 系列 (包含 llama, 3.3)
-    if (idLower.includes('llama') && idLower.includes('3.3')) {
-      return true;
-    }
-    // 4. Gemma 系列 (包含 gemma)
-    if (idLower.includes('gemma')) {
-      return true;
-    }
-  }
-  return false;
-};
-
 const getDefaultModelOptions = (aiApiUrl: string): ModelOption[] => (
   isOpenRouterApiUrl(aiApiUrl)
-    ? [{ id: DEFAULT_AI_MODEL, name: 'OpenRouter: Free Auto-Route (免费自动路由)', isFree: true }]
-    : []
+    ? [
+        { id: DEFAULT_AI_MODEL, name: 'OpenRouter: Free Auto-Route (免费自动路由)', isFree: true },
+        { id: 'google/gemini-2.0-flash-lite-preview-02-05:free', name: 'Google: Gemini 2.0 Flash Lite (Free)', isFree: true },
+        { id: 'qwen/qwen-2.5-72b-instruct', name: 'Qwen 2.5 72B Instruct', isFree: false }
+      ]
+    : [
+        { id: 'openrouter-free', name: 'openrouter-free (聚合网关免费模型池)', isFree: true }
+      ]
 );
 
 const LEGACY_INVALID_MODELS = new Set([
@@ -78,36 +70,46 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
   const [aiModel, setAiModel] = useState<string>(DEFAULT_AI_MODEL);
   const [saveKeyToCloud, setSaveKeyToCloud] = useState<boolean>(true);
   
-  // 大模型动态同步与可搜索下拉框所需状态
+  // ── 模型列表与搜索状态 ──
   const [modelList, setModelList] = useState<ModelOption[]>([]);
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
 
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [saveStatus, setSaveStatus] = useState<boolean>(false);
-  const [importStatus, setImportStatus] = useState<'idle' | 'success' | 'error'>('idle');
-
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // 恢复大模型本地列表缓存
-  useEffect(() => {
-    setModelList(loadCachedModels(aiApiUrl) || getDefaultModelOptions(aiApiUrl));
-  }, [aiApiUrl]);
 
   useEffect(() => {
     if (!isOpenRouterApiUrl(aiApiUrl) && (aiModel === DEFAULT_AI_MODEL || LEGACY_INVALID_MODELS.has(aiModel))) {
-      setAiModel('');
+      setAiModel('openrouter-free');
     }
   }, [aiApiUrl, aiModel]);
 
-  // 一键同步云端大模型列表
+  // 加载缓存的模型列表
+  useEffect(() => {
+    const cached = loadCachedModels(aiApiUrl) || getDefaultModelOptions(aiApiUrl);
+    setModelList(cached);
+  }, [aiApiUrl]);
+
+  // 点击外部关闭下拉菜单
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsDropdownOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
   const handleSyncModels = async () => {
     if (!aiApiKey) {
-      showToast('⚠️ 请先填写大模型 API Key 密钥，再点击同步！', 'error');
+      showToast('请先填写引擎服务凭据 (API Key)，再点击同步！', 'error');
       return;
     }
     setIsSyncing(true);
-    showToast('🔄 正在同步云端大模型可用型号列表...', 'info');
+    showToast('正在同步云端大模型可用型号列表...', 'info');
     try {
       const response = await fetch(`${BACKEND_URL}/api/models`, {
         method: 'POST',
@@ -124,326 +126,307 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       }
 
       const resData = await response.json();
-      if (resData.success && resData.models) {
+      if (resData.success && resData.models && resData.models.length > 0) {
         setModelList(resData.models);
         saveCachedModels(resData.models, aiApiUrl);
-        showToast(`🎉 成功同步 ${resData.models.length} 个可用模型！免费大模型已置顶推荐。`, 'success');
+        setIsDropdownOpen(true);
+        showToast(`成功同步 ${resData.models.length} 个可用模型！已为您展开选择列表。`, 'success');
+      } else {
+        throw new Error('未返回可用模型列表');
       }
     } catch (err: any) {
-      console.error('同步模型列表失败:', err);
-      showToast(`❌ 同步模型失败: ${err.message || err}，请核对密钥及 API 接口地址。`, 'error');
+      console.error('同步可用引擎失败:', err);
+      showToast(`同步模型失败: ${err.message || err}，已保留预设候选列表。`, 'error');
+      setModelList(getDefaultModelOptions(aiApiUrl));
     } finally {
       setIsSyncing(false);
     }
   };
 
-  // 恢复出厂设置（清空所有数据，供分发或重置）
   const handleResetData = async () => {
     const confirm1 = window.confirm(
-      '⚠️ 危险操作警示：\n\n该操作将永久擦除您在本地保存的所有工作日志、周报历史以及岗位参数配置，将其彻底恢复到出厂初始状态！\n\n此操作不可撤销，您真的确定要继续吗？'
+      '危险操作警示：\n\n该操作将永久擦除您在本地保存的所有工作日志、周报历史以及岗位参数配置，将其彻底恢复到出厂初始状态！\n\n此操作不可撤销，您真的确定要继续吗？'
     );
     if (!confirm1) return;
 
     const confirm2 = window.confirm(
-      '⚠️ 请再次确认：\n\n在清空数据前，强烈建议您在右侧点击“下载全部数据备份 (JSON)”保存您的本地日志备份。\n\n您是否已经做好了备份，并确定要抹除所有本地数据？'
+      '请再次确认：\\n\\n在清空数据前，强烈建议您在右侧点击“下载全部数据备份 (JSON)”保存您的本地日志备份。\\n\\n您是否已经做好了备份，并确定要抹除所有本地数据？'
     );
     if (!confirm2) return;
 
     const res = await resetAllData();
     if (res.success) {
-      showToast('🎉 系统已成功恢复出厂设置，所有数据已清空！', 'success');
+      showToast('系统已彻底恢复出厂初始状态！', 'info');
       onSaveSuccess();
-      // 延迟 1.5 秒重新加载页面，让所有状态归零
-      setTimeout(() => {
-        window.location.reload();
-      }, 1500);
     } else {
-      showToast('❌ 重置失败，请检查服务连接状态。', 'error');
+      showToast('恢复出厂设置失败，请确认后端 API 服务已正常开启！', 'error');
     }
   };
 
-  // 初始化设置值
   useEffect(() => {
-    const currentLoggedUser = getCurrentUser();
-    const localAISettings = getUserAISettings(currentLoggedUser);
-    const cloudSavePref = appData.settings?.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
+    if (appData && appData.settings) {
+      const s = appData.settings;
+      setJob(s.job || 'frontend');
+      setCustomJobName(s.customJobName || '');
+      setTone(s.tone || 'professional');
+      setSimilarityThreshold(s.similarityThreshold ?? 50);
+      setRollingDays(s.rollingDays ?? 7);
 
-    if (appData.settings) {
-      setJob(appData.settings.job || 'frontend');
-      setCustomJobName(appData.settings.customJobName || '');
-      setTone(appData.settings.tone || 'professional');
-      setSimilarityThreshold(appData.settings.similarityThreshold || 50);
-      setRollingDays(appData.settings.rollingDays || 7);
-      
-      setSaveKeyToCloud(cloudSavePref);
+      const localAI = getUserAISettings();
+      const currentUrl = (localAI && localAI.aiApiUrl !== undefined) ? localAI.aiApiUrl : (s.aiApiUrl || DEFAULT_AI_API_URL);
+      const rawModel = (localAI && localAI.aiModel !== undefined) ? localAI.aiModel : (s.aiModel || (isOpenRouterApiUrl(currentUrl) ? DEFAULT_AI_MODEL : 'openrouter-free'));
 
-      setAiEnabled(localAISettings.aiEnabled !== undefined ? !!localAISettings.aiEnabled : (appData.settings.aiEnabled || false));
-      setAiApiUrl(localAISettings.aiApiUrl || appData.settings.aiApiUrl || DEFAULT_AI_API_URL);
-      const resolvedModel = normalizeModelId(localAISettings.aiModel || appData.settings.aiModel || (isOpenRouterApiUrl(localAISettings.aiApiUrl || appData.settings.aiApiUrl || DEFAULT_AI_API_URL) ? DEFAULT_AI_MODEL : ''), localAISettings.aiApiUrl || appData.settings.aiApiUrl || DEFAULT_AI_API_URL);
-      setAiModel(resolvedModel);
-      setAiApiKey(cloudSavePref ? (appData.settings.aiApiKey || localAISettings.aiApiKey || '') : (localAISettings.aiApiKey || ''));
+      setAiEnabled((localAI && localAI.aiEnabled !== undefined) ? localAI.aiEnabled : (s.aiEnabled || false));
+      setAiApiKey((localAI && localAI.aiApiKey !== undefined) ? localAI.aiApiKey : (s.aiApiKey || ''));
+      setAiApiUrl(currentUrl);
+      setAiModel(normalizeModelId(rawModel, currentUrl));
+      setSaveKeyToCloud(s.saveKeyToCloud !== undefined ? s.saveKeyToCloud : true);
     }
-  }, [appData.settings]);
+  }, [appData]);
 
-  // 保存设置
   const handleSaveSettings = async () => {
-    const normalizedCustomJobName = customJobName.trim();
-
-    // 1. 根据是否勾选云端保存，决定是否向后端数据库上传真实的 API Key (若不勾选则在云端强制物理擦除为空)
-    const res = await saveSettings({
+    const newSettings = {
       job,
-      customJobName: normalizedCustomJobName,
+      customJobName: job === 'custom' ? customJobName.trim() : '',
       tone,
-      similarityThreshold,
-      rollingDays,
-      aiApiKey: saveKeyToCloud ? aiApiKey : '', // 若用户不保存，后端强制落盘为空
-      aiApiUrl,
-      aiModel,
+      similarityThreshold: Number(similarityThreshold),
+      rollingDays: Number(rollingDays),
       aiEnabled,
-      saveKeyToCloud // 传给后端存盘，永久记住用户的安全保存偏好！
+      aiApiKey: saveKeyToCloud ? aiApiKey.trim() : '',
+      aiApiUrl: aiApiUrl.trim() || DEFAULT_AI_API_URL,
+      aiModel: aiModel.trim() || (isOpenRouterApiUrl(aiApiUrl) ? DEFAULT_AI_MODEL : 'openrouter-free'),
+      saveKeyToCloud
+    };
+
+    saveUserAISettings({
+      aiEnabled,
+      aiApiKey: aiApiKey.trim(),
+      aiApiUrl: newSettings.aiApiUrl,
+      aiModel: newSettings.aiModel
     });
 
-    // 2. 敏感的个人大模型密钥，根据不同登录用户隔离缓存在本地 LocalStorage 中
-    const localConfig = {
-      aiEnabled,
-      aiApiKey,
-      aiApiUrl,
-      aiModel
-    };
-    saveUserAISettings(localConfig);
-
-    if (res.success) {
-      setSaveStatus(true);
-      showToast('🎉 个性化参数及大模型配置已安全保存！', 'success');
-      onSaveSuccess();
-      setTimeout(() => setSaveStatus(false), 2000);
-    } else {
-      showToast('❌ 保存配置失败，请确认后端 API 服务已正常开启！', 'error');
-    }
-  };
-
-  // 备份导出（导出完整的 AppData JSON 文件）
-  const handleExportData = () => {
     try {
-      const dataStr = JSON.stringify(appData, null, 2);
-      const dataUri = 'data:application/json;charset=utf-8,'+ encodeURIComponent(dataStr);
-      
-      const exportFileDefaultName = `winner_daily_backup_${new Date().toISOString().split('T')[0]}.json`;
-      
-      const linkElement = document.createElement('a');
-      linkElement.setAttribute('href', dataUri);
-      linkElement.setAttribute('download', exportFileDefaultName);
-      linkElement.click();
-    } catch (e) {
-      showToast('❌ 导出备份数据失败！', 'error');
+      const res = await saveSettings(newSettings);
+      if (res.success) {
+        setSaveStatus(true);
+        showToast('工作台参数及引擎凭据配置已成功保存！', 'success');
+        onSaveSuccess();
+        setTimeout(() => setSaveStatus(false), 2500);
+      } else {
+        showToast('保存失败，请检查后端网络状态！', 'error');
+      }
+    } catch (e: any) {
+      console.warn('在线保存配置失败，已保存至本地');
+      setSaveStatus(true);
+      showToast('配置已保存至当前浏览器本地存储！', 'success');
+      setTimeout(() => setSaveStatus(false), 2500);
     }
   };
 
-  // 备份导入（选择 JSON 文件覆盖本地）
-  const handleImportData = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+  const handleExportData = () => {
+    const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(appData, null, 2));
+    const downloadAnchor = document.createElement('a');
+    downloadAnchor.setAttribute('href', dataStr);
+    const date = new Date().toISOString().split('T')[0];
+    downloadAnchor.setAttribute('download', `DevTask_Backup_${date}.json`);
+    document.body.appendChild(downloadAnchor);
+    downloadAnchor.click();
+    downloadAnchor.remove();
+    showToast('本地事项数据备份已成功导出！', 'success');
+  };
 
-    const file = files[0];
+  const handleImportClick = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+      fileInputRef.current.click();
+    }
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
     const reader = new FileReader();
-    
     reader.onload = async (event) => {
       try {
-        const parsed = JSON.parse(event.target?.result as string);
-        
-        // 简单验证 JSON 结构
-        if (!parsed.logs || !parsed.settings) {
-          throw new Error('无效的备份数据结构');
-        }
-
-        if (confirm('导入备份将会完全覆盖您当前的日报历史数据和系统配置，该操作无法撤销。确定要继续导入吗？')) {
-          const res = await importAllData(parsed);
+        const json = JSON.parse(event.target?.result as string);
+        if (json && (json.logs || json.settings)) {
+          const res = await importAllData(json);
           if (res.success) {
-            setImportStatus('success');
-            showToast('🎉 备份数据已导入，本地历史及配置还原成功！', 'success');
+            showToast('数据已成功恢复！正在刷新工作台...', 'success');
             onSaveSuccess();
-            setTimeout(() => setImportStatus('idle'), 2000);
           } else {
-            setImportStatus('error');
-            showToast('❌ 备份数据导入失败，请检查服务状态。', 'error');
-            setTimeout(() => setImportStatus('idle'), 2000);
+            showToast('导入失败，请检查后端 API 服务！', 'error');
           }
+        } else {
+          showToast('导入文件格式不合法，请上传正确的备份 JSON 文件！', 'error');
         }
       } catch (err) {
-        showToast('❌ 解析备份失败，请确保文件是由本系统导出的 JSON 备份文件！', 'error');
-        setImportStatus('error');
-        setTimeout(() => setImportStatus('idle'), 2000);
+        showToast('文件解析失败，请确保上传的是合法的 JSON 格式备份！', 'error');
       }
     };
-
     reader.readAsText(file);
-    // 重置 input value 方便下次触发 change
-    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  // 过滤模型列表
+  const filteredModels = modelList.filter((m) => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return true;
+    if (q === 'free') return m.isFree;
+    return m.id.toLowerCase().includes(q) || m.name.toLowerCase().includes(q);
+  });
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', flex: 1, maxWidth: '800px' }}>
-      {/* 标题 */}
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '22px', flex: 1, maxWidth: '1100px' }}>
+      <input
+        type="file"
+        ref={fileInputRef}
+        onChange={handleFileChange}
+        accept=".json"
+        style={{ display: 'none' }}
+      />
+
+      {/* 头部标题 */}
       <div>
-        <h2 style={{ fontSize: '24px', fontWeight: '800' }}>个性化配置与备份</h2>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' }}>
-          定制您的岗位、生成风格，配置查重警戒线，以及随时安全导入/导出您的日志历史。
+        <h2 style={{ fontSize: '22px', fontWeight: '800', letterSpacing: '-0.02em' }}>工作台首选项与环境配置</h2>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '13px', marginTop: '4px' }}>
+          定制岗位预设、语法引擎接口、模型选择与本地数据备份管理。
         </p>
       </div>
 
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
-        {/* 1. 基础个性化设置 */}
-        <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px', marginBottom: '8px' }}>
-            <SettingsIcon size={18} color="var(--accent-color)" />
-            <h3 style={{ fontSize: '16px', fontWeight: '700' }}>智能模板风格参数</h3>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(460px, 1fr))', gap: '20px' }}>
+        {/* 1. 基础岗位与排版参数 */}
+        <div className="liquid-glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px' }}>
+          <div className="panel-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <SettingsIcon size={18} color="var(--accent-color)" />
+              <h3 style={{ fontSize: '16px', fontWeight: '800' }}>基础环境与归档参数 (Preferences)</h3>
+            </div>
           </div>
 
-          <div className="settings-grid">
-            {/* 工作岗位 */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>预设工作岗位</label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>预设工作岗位</label>
               <select value={job} onChange={(e) => setJob(e.target.value)}>
-                <option value="frontend">💻 前端开发工程师</option>
-                <option value="designer">🎨 UI/UX 视觉设计师</option>
-                <option value="tester">🧪 测试工程师</option>
-                <option value="custom">✍️ 自定义岗位</option>
+                <option value="frontend">前端开发工程师</option>
+                <option value="backend">后端开发工程师</option>
+                <option value="fullstack">全栈开发工程师</option>
+                <option value="tester">测试工程师</option>
+                <option value="designer">UI/UX 视觉设计师</option>
+                <option value="pm">产品经理</option>
+                <option value="devops">运维与SRE工程师</option>
+                <option value="custom">自定义岗位</option>
               </select>
             </div>
 
-            {/* 日报语气风格 */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>生成语气风格</label>
+            {job === 'custom' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>自定义岗位名称</label>
+                <input
+                  type="text"
+                  value={customJobName}
+                  onChange={(e) => setCustomJobName(e.target.value)}
+                  placeholder="例如：前端架构师、数据分析师"
+                />
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>事项排版详略模式</label>
               <select value={tone} onChange={(e) => setTone(e.target.value)}>
-                <option value="professional">📋 专业严谨型（工作量饱满，措辞客观）</option>
-                <option value="terse" disabled>⚡ 精简干练型（直接罗列痛点，绝不废话，敬请期待）</option>
-                <option value="active" disabled>🌟 积极进取型（体现个人技术成长，敬请期待）</option>
+                <option value="professional">专业严谨型 (量化闭环，描述详实)</option>
+                <option value="daily">日常写实型 (工作流记录)</option>
               </select>
             </div>
-          </div>
 
-          {job === 'custom' && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>自定义岗位名称</label>
-              <input
-                type="text"
-                value={customJobName}
-                onChange={(e) => setCustomJobName(e.target.value)}
-                placeholder="例如：产品经理、运营、后端开发工程师"
-              />
-            </div>
-          )}
-
-          {/* 查重报警敏感度 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>
-                查重相似度高危阈值
-              </label>
-              <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--accent-color)' }}>
-                {similarityThreshold}%
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* 格式校验滑块 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>格式一致性校验阈值</label>
+                <span style={{ fontSize: '13px', fontWeight: '800', color: 'var(--accent-color)' }}>{similarityThreshold}%</span>
+              </div>
               <input
                 type="range"
                 min="30"
                 max="80"
                 value={similarityThreshold}
                 onChange={(e) => setSimilarityThreshold(Number(e.target.value))}
-                style={{ flex: 1, accentColor: 'var(--accent-color)', cursor: 'pointer' }}
+                style={{ accentColor: 'var(--accent-color)', cursor: 'pointer' }}
               />
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-muted)', width: '220px' }}>
-                <ShieldAlert size={14} color="#F59E0B" />
-                <span>当与30天内历史日志相似度超此值时报红</span>
-              </div>
             </div>
-          </div>
 
-          {/* 滚动补录窗口调节 */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>
-                考勤滚动补填允许窗口期（天）
-              </label>
-              <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--accent-color)' }}>
-                {rollingDays} 天
-              </span>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            {/* 事项归档周期滑块 */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>事项归档统计周期窗口</label>
+                <span style={{ fontSize: '13px', fontWeight: '800', color: 'var(--accent-color)' }}>{rollingDays} 天</span>
+              </div>
               <input
                 type="range"
                 min="3"
                 max="30"
                 value={rollingDays}
                 onChange={(e) => setRollingDays(Number(e.target.value))}
-                style={{ flex: 1, accentColor: 'var(--accent-color)', cursor: 'pointer' }}
+                style={{ accentColor: 'var(--accent-color)', cursor: 'pointer' }}
               />
-              <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '11px', color: 'var(--text-muted)', width: '220px' }}>
-                <ShieldAlert size={14} color="#F59E0B" />
-                <span>允许当天往前推 X 天内可以补写日志</span>
-              </div>
             </div>
           </div>
 
-          {/* 保存配置按钮 */}
           <button
             onClick={handleSaveSettings}
             className="clickable"
             style={{
               alignSelf: 'flex-end',
-              padding: '10px 24px',
-              borderRadius: '8px',
+              padding: '10px 20px',
+              borderRadius: '12px',
               background: saveStatus ? '#10B981' : 'var(--accent-gradient)',
               color: '#ffffff',
               fontSize: '13px',
-              fontWeight: '600',
+              fontWeight: '700',
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              marginTop: '12px'
+              boxShadow: '0 4px 14px var(--accent-glow)'
             }}
           >
             {saveStatus ? <Check size={14} /> : <Save size={14} />}
-            <span>{saveStatus ? '参数配置已生效' : '保存配置参数'}</span>
+            <span>{saveStatus ? '参数已生效' : '保存基础参数'}</span>
           </button>
         </div>
 
-        {/* 1.5. 在线 AI 智能大模型对接 */}
-        <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+        {/* 2. 智能排版与分析引擎 (含模型选择与搜索) */}
+        <div className="liquid-glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '18px', position: 'relative' }}>
           <div className="panel-header">
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Cpu size={18} color="var(--accent-color)" />
-              <h3 style={{ fontSize: '16px', fontWeight: '700' }}>🤖 在线 AI 智能大模型联调 (免人工复制)</h3>
+              <h3 style={{ fontSize: '16px', fontWeight: '800' }}>智能排版与分析引擎 (Engine Service)</h3>
             </div>
-            
             {aiEnabled && (
               <button
                 onClick={handleSyncModels}
                 disabled={isSyncing}
                 className="clickable"
                 style={{
-                  padding: '6px 14px',
-                  borderRadius: '6px',
-                  background: 'rgba(59, 130, 246, 0.1)',
-                  border: '1px solid rgba(59, 130, 246, 0.3)',
-                  color: 'var(--accent-color)',
-                  fontSize: '12px',
+                  padding: '5px 12px',
+                  borderRadius: '8px',
+                  background: 'var(--glass-surface-subtle)',
+                  border: '1px solid var(--glass-border)',
+                  color: 'var(--text-primary)',
+                  fontSize: '11px',
                   fontWeight: '600',
                   display: 'flex',
                   alignItems: 'center',
-                  gap: '6px'
+                  gap: '4px'
                 }}
               >
-                <RefreshCw size={12} className={isSyncing ? 'spin-animation' : ''} />
-                <span>{isSyncing ? '正在拉取...' : '🔄 同步大模型列表'}</span>
+                <RefreshCw size={12} style={isSyncing ? { animation: 'spin 1s linear infinite' } : undefined} />
+                <span>{isSyncing ? '正在同步...' : '同步模型列表'}</span>
               </button>
             )}
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-            {/* 是否启用 */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
               <input
                 type="checkbox"
                 id="aiEnabled"
@@ -451,260 +434,213 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                 onChange={(e) => setAiEnabled(e.target.checked)}
                 style={{ width: '18px', height: '18px', cursor: 'pointer' }}
               />
-              <label htmlFor="aiEnabled" style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-primary)', cursor: 'pointer' }}>
-                开启在线大模型生成模式（开启后，点击“智能生成”将直连 AI API，无需手动复制 Prompt）
+              <label htmlFor="aiEnabled" style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text-primary)', cursor: 'pointer' }}>
+                启用在线智能语法与格式化引擎
               </label>
             </div>
 
             {aiEnabled && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '3px solid var(--accent-color)', paddingLeft: '16px', marginTop: '4px' }}>
-                <div className="settings-grid">
-                  {/* API Base URL */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>API Base URL (基准请求地址)</label>
-                    <input
-                      type="text"
-                      value={aiApiUrl}
-                      onChange={(e) => setAiApiUrl(e.target.value)}
-                      placeholder="例如: https://openrouter.ai/api/v1"
-                    />
-                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                      兼容 OpenAI 格式的大模型平台接口地址。
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>API 接口地址 (Base URL)</label>
+                  <input
+                    type="text"
+                    value={aiApiUrl}
+                    onChange={(e) => setAiApiUrl(e.target.value)}
+                    placeholder="例如: http://111.228.44.255:7880/v1"
+                  />
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>API Key 密钥</label>
+                  <input
+                    type="password"
+                    value={aiApiKey}
+                    onChange={(e) => setAiApiKey(e.target.value)}
+                    placeholder="sk-octopus-..."
+                  />
+                </div>
+
+                {/* 🌟 核心：支持搜索与下拉选择的大模型选择器 🌟 */}
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }} ref={dropdownRef}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>
+                      已选大模型型号 (Model ID)
+                    </label>
+                    <span style={{ fontSize: '11px', color: 'var(--accent-color)', fontWeight: '600' }}>
+                      支持直接键入或点击右侧展开选择
                     </span>
                   </div>
 
-                  {/* API Key */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>API Key (密钥)</label>
-                    <input
-                      type="password"
-                      value={aiApiKey}
-                      onChange={(e) => setAiApiKey(e.target.value)}
-                      placeholder="sk-..."
-                    />
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '2px' }}>
-                      <input 
-                        type="checkbox" 
-                        id="saveKeyToCloud"
-                        checked={saveKeyToCloud}
-                        onChange={(e) => setSaveKeyToCloud(e.target.checked)}
-                        style={{ cursor: 'pointer', width: '14px', height: '14px' }}
-                      />
-                      <label htmlFor="saveKeyToCloud" style={{ fontSize: '11px', color: 'var(--text-muted)', cursor: 'pointer', userSelect: 'none' }}>
-                        💾 允许将 API 密钥安全备份在云端（可跨设备同步；若不勾选，密钥仅保存在当前浏览器，退出后彻底销毁）
-                      </label>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="settings-grid" style={{ alignItems: 'end' }}>
-                  {/* 可搜索大模型下拉框组件 */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', position: 'relative' }}>
-                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>自选大模型选择与检索 (免费置顶)</label>
-                    
-                    {/* 模拟 Select */}
-                    <div 
-                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
-                      className="clickable"
-                      style={{
-                        display: 'flex',
-                        justifyContent: 'space-between',
-                        alignItems: 'center',
-                        background: 'rgba(255,255,255,0.03)',
-                        border: '1px solid var(--glass-border)',
-                        borderRadius: '8px',
-                        padding: '10px 14px',
-                        color: 'var(--text-primary)',
-                        fontSize: '13px',
-                        cursor: 'pointer',
-                        minHeight: '42px',
-                        boxSizing: 'border-box'
-                      }}
-                    >
-                      <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '280px' }}>
-                        {aiModel ? (
-                          <>
-                            {modelList.find(m => m.id === aiModel)?.isFree ? '🟢 [免费] ' : '🔴 [付费] '}
-                            {(() => {
-                              const found = modelList.find(m => m.id === aiModel);
-                              return found && checkIsRecommended(found) ? '🔥 [推荐] ' : '';
-                            })()}
-                            {modelList.find(m => m.id === aiModel)?.name || aiModel}
-                          </>
-                        ) : '点击选择模型...'}
-                      </span>
-                      <span style={{ fontSize: '10px', color: 'var(--text-muted)' }}>{isDropdownOpen ? '▲' : '▼'}</span>
-                    </div>
-
-                    {/* 下拉悬浮层 */}
-                    {isDropdownOpen && (
-                      <div 
-                        style={{
-                          position: 'absolute',
-                          bottom: '100%',
-                          left: 0,
-                          right: 0,
-                          zIndex: 1000,
-                          background: '#111827',
-                          border: '1px solid var(--glass-border)',
-                          borderRadius: '10px',
-                          boxShadow: '0 -10px 25px rgba(0,0,0,0.5)',
-                          padding: '12px',
-                          marginBottom: '8px',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '8px',
-                          backdropFilter: 'blur(16px)',
-                          boxSizing: 'border-box'
-                        }}
-                      >
-                        {/* 搜索框 */}
-                        <input
-                          type="text"
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          placeholder="🔍 输入模型名称或 ID 检索..."
-                          onClick={(e) => e.stopPropagation()} // 防止冒泡关闭下拉框
-                          style={{
-                            width: '100%',
-                            boxSizing: 'border-box',
-                            background: 'rgba(0,0,0,0.3)',
-                            border: '1px solid var(--glass-border)',
-                            padding: '8px 12px',
-                            borderRadius: '6px',
-                            color: '#ffffff',
-                            fontSize: '13px'
-                          }}
-                        />
-
-                        {/* 模型过滤结果列表 */}
-                        <div 
-                          style={{
-                            maxHeight: '180px',
-                            overflowY: 'auto',
-                            display: 'flex',
-                            flexDirection: 'column',
-                            gap: '4px',
-                            marginTop: '4px'
-                          }}
-                        >
-                          {(() => {
-                            const getModelWeight = (m: { id: string; name: string; isFree: boolean }) => {
-                              const isRec = checkIsRecommended(m);
-                              if (m.isFree && isRec) return 4; // 推荐免费置顶
-                              if (m.isFree) return 3;          // 免费普通
-                              if (isRec) return 2;             // 推荐付费 (虽然目前设定无)
-                              return 1;                        // 付费普通
-                            };
-
-                            const filtered = modelList
-                              .filter(m => 
-                                m.id.toLowerCase().includes(searchQuery.toLowerCase()) || 
-                                m.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                                (searchQuery.toLowerCase() === 'free' && m.isFree)
-                              )
-                              .sort((a, b) => getModelWeight(b) - getModelWeight(a));
-
-                            return filtered.length > 0 ? (
-                              filtered.map((m) => {
-                                const isRec = checkIsRecommended(m);
-                                return (
-                                  <div
-                                    key={m.id}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setAiModel(m.id);
-                                      setIsDropdownOpen(false);
-                                      setSearchQuery('');
-                                    }}
-                                    className="clickable"
-                                    style={{
-                                      padding: '8px 10px',
-                                      borderRadius: '6px',
-                                      background: aiModel === m.id ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                                      border: aiModel === m.id ? '1px solid rgba(59, 130, 246, 0.3)' : '1px solid transparent',
-                                      fontSize: '12px',
-                                      display: 'flex',
-                                      justifyContent: 'space-between',
-                                      alignItems: 'center',
-                                      cursor: 'pointer',
-                                      color: aiModel === m.id ? '#ffffff' : 'var(--text-secondary)'
-                                    }}
-                                  >
-                                    <span style={{ fontWeight: aiModel === m.id ? '700' : '400', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '240px' }}>
-                                      {m.id.toLowerCase().includes('openrouter/free') ? '[备用] ' : (isRec ? '🔥 ' : '')}{m.name}
-                                    </span>
-                                    <div style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                                      {m.id.toLowerCase().includes('openrouter/free') && (
-                                        <span 
-                                          style={{
-                                            fontSize: '8px',
-                                            padding: '1px 4px',
-                                            borderRadius: '3px',
-                                            background: 'rgba(59, 130, 246, 0.15)',
-                                            color: '#3B82F6',
-                                            fontWeight: '700',
-                                            border: '1px solid rgba(59, 130, 246, 0.2)'
-                                          }}
-                                        >
-                                          备用路由
-                                        </span>
-                                      )}
-                                      {isRec && (
-                                        <span 
-                                          style={{
-                                            fontSize: '8px',
-                                            padding: '1px 4px',
-                                            borderRadius: '3px',
-                                            background: 'rgba(245, 158, 11, 0.15)',
-                                            color: '#F59E0B',
-                                            fontWeight: '700',
-                                            border: '1px solid rgba(245, 158, 11, 0.2)'
-                                          }}
-                                        >
-                                          推荐
-                                        </span>
-                                      )}
-                                      <span 
-                                        style={{
-                                          fontSize: '8px',
-                                          padding: '1px 4px',
-                                          borderRadius: '3px',
-                                          background: m.isFree ? 'rgba(16, 185, 129, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-                                          color: m.isFree ? '#10B981' : '#EF4444',
-                                          fontWeight: '700',
-                                          border: m.isFree ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(239, 68, 68, 0.2)'
-                                        }}
-                                      >
-                                        {m.isFree ? '免费' : '付费'}
-                                      </span>
-                                    </div>
-                                  </div>
-                                );
-                              })
-                            ) : (
-                              <div style={{ padding: '12px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '11px' }}>
-                                未找到匹配的模型
-                              </div>
-                            );
-                          })()}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* 自定义输入框兜底 */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                    <label style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-secondary)' }}>手动补录模型 ID (非必填)</label>
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'relative' }}>
                     <input
                       type="text"
                       value={aiModel}
                       onChange={(e) => setAiModel(e.target.value)}
-                      placeholder={isOpenRouterApiUrl(aiApiUrl) ? '如: openrouter/free' : '填写当前上游支持的真实模型 ID'}
+                      placeholder="例如: openrouter-free 或 openrouter/free"
+                      style={{ flex: 1 }}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setIsDropdownOpen(!isDropdownOpen)}
+                      className="clickable"
+                      style={{
+                        padding: '10px 14px',
+                        background: isDropdownOpen ? 'var(--accent-gradient)' : 'var(--glass-surface-subtle)',
+                        border: '1px solid ' + (isDropdownOpen ? 'rgba(255,255,255,0.3)' : 'var(--glass-border)'),
+                        borderRadius: '12px',
+                        color: isDropdownOpen ? '#ffffff' : 'var(--text-primary)',
+                        fontSize: '12px',
+                        fontWeight: '700',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        cursor: 'pointer',
+                        boxShadow: isDropdownOpen ? '0 4px 12px var(--accent-glow)' : 'none'
+                      }}
+                      title="点击展开可用模型列表与快速检索"
+                    >
+                      <Search size={14} />
+                      <span>{isDropdownOpen ? '收起' : '选择/搜索'}</span>
+                      {isDropdownOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                    </button>
+                  </div>
+
+                  {/* 内联展开模型检索面板 (绝不被下方元素遮挡) */}
+                  {isDropdownOpen && (
+                    <div
+                      style={{
+                        marginTop: '10px',
+                        padding: '14px',
+                        borderRadius: '14px',
+                        background: 'rgba(255, 255, 255, 0.04)',
+                        border: '1px solid rgba(99, 102, 241, 0.4)',
+                        boxShadow: 'inset 0 1px 0 rgba(255, 255, 255, 0.1), 0 8px 24px rgba(0, 0, 0, 0.35)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px'
+                      }}
+                    >
+                      {/* 搜索框 */}
+                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <Search size={14} style={{ position: 'absolute', left: '12px', color: 'var(--text-muted)' }} />
+                        <input
+                          type="text"
+                          placeholder="输入模型名称、ID 或厂商快速过滤 (例如: free, gemma, qwen)..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px 8px 34px',
+                            borderRadius: '10px',
+                            fontSize: '12px',
+                            background: 'rgba(0, 0, 0, 0.25)',
+                            border: '1px solid var(--glass-border)'
+                          }}
+                          autoFocus
+                        />
+                      </div>
+
+                      {/* 模型列表 */}
+                      <div
+                        style={{
+                          maxHeight: '260px',
+                          overflowY: 'auto',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '6px',
+                          paddingRight: '4px'
+                        }}
+                      >
+                        {filteredModels.length > 0 ? (
+                          filteredModels.map((m) => {
+                            const isSelected = aiModel === m.id;
+                            const isFree = m.isFree || m.id.includes('free');
+                            return (
+                              <div
+                                key={m.id}
+                                onClick={() => {
+                                  setAiModel(m.id);
+                                  setIsDropdownOpen(false);
+                                  setSearchQuery('');
+                                  showToast(`已选定模型: ${m.id}`, 'info');
+                                }}
+                                className="clickable"
+                                style={{
+                                  padding: '9px 12px',
+                                  borderRadius: '10px',
+                                  background: isSelected ? 'rgba(99, 102, 241, 0.25)' : 'rgba(255, 255, 255, 0.03)',
+                                  border: isSelected ? '1px solid var(--accent-color)' : '1px solid var(--glass-border-subtle)',
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'center',
+                                  cursor: 'pointer',
+                                  fontSize: '12px',
+                                  transition: 'all 0.15s ease'
+                                }}
+                              >
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', overflow: 'hidden' }}>
+                                  <div style={{ fontWeight: isSelected ? '800' : '600', color: isSelected ? 'var(--accent-color)' : 'var(--text-primary)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                    {m.name || m.id}
+                                  </div>
+                                  <div style={{ fontSize: '10px', color: 'var(--text-muted)', fontFamily: 'monospace' }}>
+                                    {m.id}
+                                  </div>
+                                </div>
+
+                                <div style={{ display: 'flex', gap: '6px', alignItems: 'center', flexShrink: 0 }}>
+                                  {isFree && (
+                                    <span style={{ fontSize: '10px', padding: '2px 6px', borderRadius: '4px', background: 'rgba(16, 185, 129, 0.2)', color: '#10B981', fontWeight: '700' }}>
+                                      免费
+                                    </span>
+                                  )}
+                                  {isSelected && <Check size={14} color="var(--accent-color)" />}
+                                </div>
+                              </div>
+                            );
+                          })
+                        ) : (
+                          <div style={{ padding: '16px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '12px' }}>
+                            未找到匹配的模型，您可以直接在上方输入框键入该模型 ID。
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* 常用预置模型快捷微标签 */}
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px', marginTop: '4px' }}>
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)', alignSelf: 'center' }}>常用推荐:</span>
+                    {[
+                      { id: 'openrouter-free', label: 'openrouter-free (聚合免费池)' },
+                      { id: 'google/gemini-2.0-flash-lite-preview-02-05:free', label: 'Gemini 2.0 Flash Lite' },
+                      { id: 'qwen/qwen-2.5-72b-instruct', label: 'Qwen 2.5 72B' }
+                    ].map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => {
+                          setAiModel(item.id);
+                          showToast(`已选定 ${item.id}`, 'info');
+                        }}
+                        style={{
+                          fontSize: '10px',
+                          padding: '3px 8px',
+                          borderRadius: '6px',
+                          background: aiModel === item.id ? 'var(--accent-gradient)' : 'var(--glass-surface-subtle)',
+                          color: aiModel === item.id ? '#ffffff' : 'var(--text-secondary)',
+                          border: '1px solid ' + (aiModel === item.id ? 'rgba(255,255,255,0.3)' : 'var(--glass-border-subtle)'),
+                          cursor: 'pointer',
+                          fontWeight: aiModel === item.id ? '700' : '500'
+                        }}
+                      >
+                        {item.label}
+                      </button>
+                    ))}
                   </div>
                 </div>
-              </div>
+              </>
             )}
           </div>
 
@@ -713,46 +649,45 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
             className="clickable"
             style={{
               alignSelf: 'flex-end',
-              padding: '10px 24px',
-              borderRadius: '8px',
-              background: saveStatus ? '#10B981' : 'var(--accent-gradient)',
+              padding: '10px 20px',
+              borderRadius: '12px',
+              background: 'var(--accent-gradient)',
               color: '#ffffff',
               fontSize: '13px',
-              fontWeight: '600',
+              fontWeight: '700',
               display: 'flex',
               alignItems: 'center',
               gap: '6px',
-              marginTop: '4px'
+              boxShadow: '0 4px 14px var(--accent-glow)'
             }}
           >
-            {saveStatus ? <Check size={14} /> : <Save size={14} />}
-            <span>{saveStatus ? '在线大模型已连通生效' : '保存大模型接口配置'}</span>
+            <Save size={14} />
+            <span>保存引擎配置凭据</span>
           </button>
         </div>
 
-        {/* 2. 数据备份与灾备模块 */}
-        <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px', marginBottom: '8px' }}>
-            <ShieldAlert size={18} color="var(--accent-color)" />
-            <h3 style={{ fontSize: '16px', fontWeight: '700' }}>数据备份与导入恢复 (防丢失)</h3>
+        {/* 3. 数据备份与导入恢复 */}
+        <div className="liquid-glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div className="panel-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Download size={18} color="var(--accent-color)" />
+              <h3 style={{ fontSize: '16px', fontWeight: '800' }}>数据备份与导入恢复</h3>
+            </div>
           </div>
 
-          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-            为保护您的历史工作痕迹，我们提供本地离线双活的实体 JSON 备份与还原功能。
-            即便您在浏览器无痕模式或在未开启本地 Node.js 磁盘服务的情况下使用（导致数据存于浏览器缓存），
-            您也可以定期将所有日志导出为文件保存在本地，防止因清理浏览器缓存导致日报遗失。
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            支持将本地所有的事项数据导出为独立的 JSON 存档文件，方便离线归档或跨设备迁移。
           </p>
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '8px' }}>
-            {/* 备份导出 */}
+          <div style={{ display: 'flex', gap: '10px', marginTop: 'auto' }}>
             <button
               onClick={handleExportData}
               className="clickable"
               style={{
                 flex: 1,
-                padding: '12px',
-                borderRadius: '8px',
-                background: 'rgba(255,255,255,0.05)',
+                padding: '11px 16px',
+                borderRadius: '12px',
+                background: 'var(--glass-surface-subtle)',
                 border: '1px solid var(--glass-border)',
                 color: 'var(--text-primary)',
                 fontSize: '13px',
@@ -764,27 +699,18 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
               }}
             >
               <Download size={16} />
-              <span>下载全部数据备份 (JSON)</span>
+              <span>下载全部备份 (JSON)</span>
             </button>
-
-            {/* 备份导入 */}
-            <input
-              type="file"
-              accept=".json"
-              ref={fileInputRef}
-              onChange={handleImportData}
-              style={{ display: 'none' }}
-            />
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handleImportClick}
               className="clickable"
               style={{
                 flex: 1,
-                padding: '12px',
-                borderRadius: '8px',
-                background: importStatus === 'success' ? '#10B981' : 'rgba(255,255,255,0.05)',
+                padding: '11px 16px',
+                borderRadius: '12px',
+                background: 'var(--glass-surface-subtle)',
                 border: '1px solid var(--glass-border)',
-                color: importStatus === 'success' ? '#fff' : 'var(--text-primary)',
+                color: 'var(--text-primary)',
                 fontSize: '13px',
                 fontWeight: '600',
                 display: 'flex',
@@ -793,50 +719,45 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                 gap: '8px'
               }}
             >
-              {importStatus === 'success' ? <Check size={16} /> : <Upload size={16} />}
-              <span>
-                {importStatus === 'success'
-                  ? '备份已成功还原'
-                  : importStatus === 'error'
-                  ? '还原失败'
-                  : '从 JSON 文件还原备份'}
-              </span>
+              <Upload size={16} />
+              <span>导入 JSON 恢复</span>
             </button>
           </div>
         </div>
 
-        {/* 3. 系统重置与分发（危险操作） */}
-        <div className="glass-panel" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', borderLeft: '4px solid #EF4444' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid var(--glass-border)', paddingBottom: '12px' }}>
-            <Trash2 size={18} color="#EF4444" />
-            <h3 style={{ fontSize: '16px', fontWeight: '700', color: '#EF4444' }}>系统重置与纯净分发</h3>
+        {/* 4. 危险区域 */}
+        <div className="liquid-glass-card" style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: '16px', border: '1px solid rgba(239, 68, 68, 0.25)' }}>
+          <div className="panel-header">
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Trash2 size={18} color="#EF4444" />
+              <h3 style={{ fontSize: '16px', fontWeight: '800', color: '#EF4444' }}>危险区域 / 恢复出厂设置</h3>
+            </div>
           </div>
 
-          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: '1.6' }}>
-            如果您想将本程序打包分享给其他人使用，或者需要清除本地的全部填报记录，您可以在此一键“恢复出厂设置”。
-            系统将彻底清空本地数据库中的历史数据，并将岗位配置恢复到默认状态（建议在操作前先在上方下载备份）。
+          <p style={{ fontSize: '12px', color: 'var(--text-secondary)', lineHeight: 1.6 }}>
+            该操作将永久擦除当前本地所有事项记录、历史日志与个性化配置参数，重置为初次安装状态。
           </p>
 
           <button
             onClick={handleResetData}
             className="clickable"
             style={{
-              alignSelf: 'flex-start',
-              padding: '10px 20px',
-              borderRadius: '8px',
-              background: 'rgba(239, 68, 68, 0.1)',
-              border: '1px solid rgba(239, 68, 68, 0.3)',
+              marginTop: 'auto',
+              padding: '11px 16px',
+              borderRadius: '12px',
+              background: 'rgba(239, 68, 68, 0.12)',
+              border: '1px solid rgba(239, 68, 68, 0.35)',
               color: '#EF4444',
               fontSize: '13px',
-              fontWeight: '600',
+              fontWeight: '700',
               display: 'flex',
               alignItems: 'center',
-              gap: '8px',
-              marginTop: '4px'
+              justifyContent: 'center',
+              gap: '8px'
             }}
           >
             <Trash2 size={16} />
-            <span>🧹 恢复出厂设置（清空全部数据）</span>
+            <span>彻底重置所有本地数据</span>
           </button>
         </div>
       </div>

@@ -1,17 +1,16 @@
-import { useState, useEffect } from 'react';
-import { RouteInfo, CompareResult } from '../types/ai';
+import { useState, useEffect, useCallback } from 'react';
+import { RouteInfo, CompareResult, DirectionOption } from '../types/ai';
 import {
   ModelOption,
   BACKEND_URL,
-  getCurrentUser,
   getUserAISettings,
   saveUserAISettings,
   loadCachedModels,
-  saveCachedModels,
   saveSettings,
   isOpenRouterApiUrl,
   DEFAULT_AI_API_URL,
-  DEFAULT_AI_MODEL
+  DEFAULT_AI_MODEL,
+  fetchAIDirections
 } from '../utils/storage';
 import {
   normalizeModelId,
@@ -23,7 +22,7 @@ import {
   getDefaultModelOptions,
   LEGACY_INVALID_MODELS
 } from '../utils/modelHelpers';
-import { generateAIPrompt } from '../utils/generator';
+import { generateAIPrompt, generateLocalDirectionSuggestions, generateRandomFrontendDaily } from '../utils/generator';
 
 interface UseAIGenerationProps {
   appData: any;
@@ -52,7 +51,7 @@ export function useAIGeneration({
   customJobName,
   tone,
   mode,
-  selectedDate,
+  selectedDate: _selectedDate,
   onSaveSuccess,
   showToast,
   onNavigateToTab,
@@ -78,7 +77,13 @@ export function useAIGeneration({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [generating, setGenerating] = useState<boolean>(false);
 
-  const loadAISettings = () => {
+  // ── 方向罗盘状态 ──
+  const [directions, setDirections] = useState<DirectionOption[]>([]);
+  const [selectedDirectionId, setSelectedDirectionId] = useState<string | null>(null);
+  const [isFetchingDirections, setIsFetchingDirections] = useState<boolean>(false);
+  const [customDirectionNote, setCustomDirectionNote] = useState<string>('');
+
+  const loadAISettings = useCallback(() => {
     const localAISettings = getUserAISettings();
     const cloudSavePref = appData.settings?.saveKeyToCloud !== undefined ? appData.settings.saveKeyToCloud : true;
     const resolvedApiUrl = localAISettings.aiApiUrl || appData.settings?.aiApiUrl || DEFAULT_AI_API_URL;
@@ -95,11 +100,11 @@ export function useAIGeneration({
       aiApiUrl: resolvedApiUrl,
       aiModel: resolvedModel
     });
-  };
+  }, [appData.settings]);
 
   useEffect(() => {
     loadAISettings();
-  }, [appData.settings]);
+  }, [loadAISettings]);
 
   useEffect(() => {
     const refreshFromStorage = () => loadAISettings();
@@ -111,7 +116,7 @@ export function useAIGeneration({
       window.removeEventListener('storage', refreshFromStorage);
       window.removeEventListener('winner-daily-settings-updated', refreshFromStorage);
     };
-  }, [appData.settings]);
+  }, [loadAISettings]);
 
   useEffect(() => {
     setLastRouteInfo(null);
@@ -144,6 +149,58 @@ export function useAIGeneration({
     setModelList(loadCachedModels(aiSettings.aiApiUrl) || getDefaultModelOptions(aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl));
   }, [aiSettings.aiApiUrl]);
 
+  // ── 拉取工作方向建议 ──
+  const fetchDirections = useCallback(async (_forceOnline: boolean = false) => {
+    if (mode !== 'idle' && mode !== 'study') return;
+    setIsFetchingDirections(true);
+
+    const historyLogs = Object.entries(appData.logs || {})
+      .sort(([a], [b]) => b.localeCompare(a))
+      .slice(0, 10)
+      .map(([date, item]: [string, any]) => ({
+        date,
+        title: item.title,
+        content: item.content
+      }));
+
+    try {
+      const res = await fetchAIDirections({
+        job,
+        customJobName,
+        mode,
+        recentLogs: historyLogs,
+        aiApiKey: aiSettings.aiApiKey,
+        aiApiUrl: aiSettings.aiApiUrl,
+        aiModel: aiSettings.aiModel
+      });
+
+      if (res.success && res.directions && res.directions.length > 0) {
+        setDirections(res.directions);
+        setSelectedDirectionId(res.directions[0].id);
+      }
+    } catch (e) {
+      console.warn('获取方向建议异常，使用本地默认:', e);
+      const local = generateLocalDirectionSuggestions(job, mode, customJobName, historyLogs);
+      setDirections(local);
+      if (local.length > 0) setSelectedDirectionId(local[0].id);
+    } finally {
+      setIsFetchingDirections(false);
+    }
+  }, [mode, job, customJobName, appData.logs, aiSettings.aiApiKey, aiSettings.aiApiUrl, aiSettings.aiModel]);
+
+  // 当处于无任务/技术预研模式，且岗位或模式变化时，自动拉取 5 个切入点方向
+  useEffect(() => {
+    if (mode === 'idle' || mode === 'study') {
+      fetchDirections();
+    }
+  }, [mode, job, customJobName, fetchDirections]);
+
+  const selectedDirection = directions.find((d) => d.id === selectedDirectionId) || null;
+
+  const selectDirection = (id: string) => {
+    setSelectedDirectionId(id);
+  };
+
   const handleQuickChangeModel = async (newModel: string) => {
     const normalizedModel = normalizeModelId(newModel, aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl);
     const nextSettings = { ...aiSettings, aiModel: normalizedModel };
@@ -158,285 +215,238 @@ export function useAIGeneration({
       });
       onSaveSuccess();
     } catch (e) {
-      console.error('静默保存快捷模型失败:', e);
+      console.warn('在线保存配置失败，已保存至本地');
     }
-    showToast(`🎯 已快捷切换大模型为: ${formatSelectedModel(normalizedModel)}`, 'success');
   };
 
   const toggleCompareModel = (modelId: string) => {
+    const normalizedModelId = normalizeModelId(modelId, aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl);
     setCompareModels((prev) => {
-      if (prev.includes(modelId)) {
-        return prev.length > 1 ? prev.filter((id) => id !== modelId) : prev;
+      const exists = prev.includes(normalizedModelId);
+      if (exists) {
+        if (prev.length <= 1) {
+          showToast('对比模式至少保留 1 个模型！', 'info');
+          return prev;
+        }
+        return prev.filter((m) => m !== normalizedModelId);
+      } else {
+        if (prev.length >= 3) {
+          showToast('多模型对比最多支持同时对比 3 个模型！', 'info');
+          return prev;
+        }
+        return [...prev, normalizedModelId];
       }
-      if (prev.length >= 3) {
-        showToast('最多同时对比 3 个模型，可以先取消一个再选择。', 'info');
-        return prev;
-      }
-      return [...prev, modelId];
     });
   };
 
   const applyCompareResult = (result: CompareResult) => {
-    if (!result.title || !result.content) return;
-    setTitle(result.title);
+    if (!result.content) return;
+    setTitle(result.title || '日常日志');
     setHours(8);
     setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
     setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
     setContent(result.content);
-    if (result.routeInfo) setLastRouteInfo({ ...result.routeInfo, status: 'success' });
+    if (result.routeInfo) {
+      setLastRouteInfo({ ...result.routeInfo, status: 'success' });
+    }
     setSessionHistory((prev) => {
-      const next = [...prev, result.content || ''];
+      const next = [...prev, result.content!];
       if (next.length > 8) next.shift();
       return next;
     });
-    showToast(`已采用 ${formatSelectedModel(result.requestedModel)} 的候选日报。`, 'success');
+    showToast(`已应用 [${formatSelectedModel(result.requestedModel)}] 的生成结果！`, 'success');
   };
 
-  const hasUsableFreeModels = (models: ModelOption[]) => models.some((model) =>
-    model.isFree && model.id !== DEFAULT_AI_MODEL && !LEGACY_INVALID_MODELS.has(model.id)
-  );
-
   const refreshAvailableModels = async () => {
-    if (!aiSettings.aiApiKey) return modelList;
-
+    if (!aiSettings.aiApiKey) {
+      showToast('请先配置 API 密钥，以便从服务商拉取完整模型列表！', 'error');
+      if (onNavigateToTab) onNavigateToTab('settings');
+      return;
+    }
+    showToast('正在从大模型上游同步支持的模型列表...', 'info');
     try {
-      const response = await fetch(`${BACKEND_URL}/api/models`, {
+      const user = localStorage.getItem('winner_daily_user') || 'admin';
+      const res = await fetch(`${BACKEND_URL}/api/ai/models`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-User-Name': getCurrentUser()
+          'X-User-Name': user
         },
         body: JSON.stringify({
           aiApiKey: aiSettings.aiApiKey,
           aiApiUrl: aiSettings.aiApiUrl
         })
       });
-
-      if (!response.ok) return modelList;
-      const resData = await response.json();
-      if (!resData.success || !Array.isArray(resData.models)) return modelList;
-
-      const cleanedModels: ModelOption[] = resData.models
-        .filter((model: ModelOption) => model?.id && !LEGACY_INVALID_MODELS.has(model.id));
-      const mergedModels = [
-        ...getDefaultModelOptions(aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl),
-        ...cleanedModels.filter((model) => model.id !== DEFAULT_AI_MODEL)
-      ];
-      setModelList(mergedModels);
-      saveCachedModels(mergedModels, aiSettings.aiApiUrl);
-      return mergedModels;
-    } catch (error) {
-      console.warn('自动刷新可用模型列表失败:', error);
-      return modelList;
+      if (res.ok) {
+        const data = await res.json();
+        if (data.models && data.models.length > 0) {
+          setModelList(data.models);
+          saveCachedModels(data.models, aiSettings.aiApiUrl);
+          showToast(`成功同步 ${data.models.length} 个大模型！`, 'success');
+          return;
+        }
+      }
+      throw new Error('服务商未返回可用模型列表');
+    } catch (e: any) {
+      showToast(`同步模型列表失败: ${e.message || '网络连接超时'}`, 'error');
     }
   };
 
-  const requestGenerate = async (modelToTry: string, overrides: Record<string, any> = {}) => {
-    const response = await fetch(`${BACKEND_URL}/api/generate`, {
+  const requestGenerate = async (targetModel: string, overrides: any = {}) => {
+    const user = localStorage.getItem('winner_daily_user') || 'admin';
+    const historyLogs = Object.entries(appData.logs || {})
+      .sort(([a], [b]) => b.localeCompare(a))
+      .slice(0, 10)
+      .map(([date, item]: [string, any]) => ({
+        date,
+        title: item.title,
+        content: item.content
+      }));
+
+    // 组合输入：如果是无任务/技术预研模式，若选定了方向卡片，则将精准方向注入作为核心输入
+    let effectiveInput = userInput;
+    if (mode === 'idle' || mode === 'study') {
+      if (selectedDirection) {
+        const noteStr = customDirectionNote.trim() ? `（细节补充：${customDirectionNote.trim()}）` : '';
+        effectiveInput = `${selectedDirection.title}：${selectedDirection.summary}${noteStr}`;
+      }
+    }
+
+    const payload = {
+      userInput: effectiveInput,
+      job,
+      customJobName: job === 'custom' ? customJobName : '',
+      tone,
+      mode,
+      recentLogs: historyLogs,
+      aiApiKey: aiSettings.aiApiKey,
+      aiApiUrl: aiSettings.aiApiUrl,
+      aiModel: targetModel,
+      ...overrides
+    };
+
+    const res = await fetch(`${BACKEND_URL}/api/ai/generate`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-User-Name': getCurrentUser()
+        'X-User-Name': user
       },
-      body: JSON.stringify({
-        userInput,
-        job,
-        customJobName,
-        tone,
-        mode,
-        aiApiKey: aiSettings.aiApiKey,
-        aiApiUrl: aiSettings.aiApiUrl,
-        aiModel: modelToTry,
-        ...overrides
-      })
+      body: JSON.stringify(payload),
+      signal: AbortSignal.timeout(180000)
     });
 
-    if (!response.ok) {
-      let errData: any = {};
-      try {
-        errData = await response.json();
-      } catch (e) {
-        errData = { error: '联调接口请求失败' };
-      }
-      const requestError: any = new Error(errData.error || '联调接口请求失败');
-      requestError.statusCode = response.status;
-      requestError.routeInfo = {
-        ...(errData.routeInfo || { requestedModel: modelToTry }),
-        statusCode: response.status,
-        errorType: errData.routeInfo?.errorType || classifyGenerateError(errData.error || '联调接口请求失败', response.status)
-      };
-      throw requestError;
+    const resText = await res.text();
+    let resData: any = resText;
+    try {
+      resData = JSON.parse(resText);
+    } catch (_err) {
+      // Upstream did not return valid JSON, keep raw text
     }
 
-    return response.json();
-  };
-
-  const prepareFallbackQueue = async () => {
-    let availableModels = modelList;
-    if (!hasUsableFreeModels(availableModels)) {
-      showToast('🔄 正在刷新当前 Key 可用的免费模型列表...', 'info');
-      availableModels = await refreshAvailableModels();
+    if (!res.ok) {
+      const errorMsg = typeof resData === 'string' ? resData : (resData?.error || `生成请求失败: ${res.status}`);
+      const errorObj: any = new Error(errorMsg);
+      errorObj.statusCode = res.status;
+      errorObj.routeInfo = resData?.routeInfo;
+      throw errorObj;
     }
-    return buildFallbackQueue(aiSettings.aiModel, availableModels, aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl);
+
+    return resData;
   };
 
-  const handleGenerate = async (overrides: Record<string, any> = {}) => {
+  const handleGenerate = async (overrides: any = {}) => {
     if (mode === 'ai_prompt') {
-      const fallbackPrompt = generateAIPrompt(userInput, job, customJobName, tone);
-      setTitle('从大模型复制结果粘贴至此');
+      // 豆包提示词生成
+      const effectiveInput = userInput.trim() || (selectedDirection ? `${selectedDirection.title}：${selectedDirection.summary}` : '');
+      const prompt = generateAIPrompt(effectiveInput, job, customJobName, tone);
+      setTitle('复制提示词到豆包生成');
       setHours(8);
       setCooperation(false);
       setDifficulty(false);
-      setContent(fallbackPrompt);
+      setContent(prompt);
+      showToast('格式化 Markdown 事项模板已生成完毕！', 'success');
+      return;
+    }
 
-      if (!aiSettings.aiEnabled || !aiSettings.aiApiKey) {
-        showToast('📋 已生成本地内置 Prompt，请点击下方按钮复制并前往豆包。', 'info');
+    // 离线模式 / 未开启 AI
+    if (!aiSettings.aiEnabled || !aiSettings.aiApiKey) {
+      if (mode === 'idle' || mode === 'study') {
+        const directionTitle = selectedDirection ? selectedDirection.title : '';
+        const result = generateRandomFrontendDaily('', mode === 'study', job, customJobName);
+        if (directionTitle) {
+          result.title = directionTitle;
+        }
+        setTitle(result.title);
+        setHours(result.hours);
+        setCooperation(result.cooperation);
+        setDifficulty(result.difficulty);
+        setContent(result.content);
+        showToast('已基于选定维护事项完成格式化归档！', 'success');
+      } else {
+        const result = generateRandomFrontendDaily('', false, job, customJobName);
+        setTitle(result.title);
+        setHours(result.hours);
+        setCooperation(result.cooperation);
+        setDifficulty(result.difficulty);
+        setContent(result.content);
+        showToast('工作事项已整理并载入！', 'success');
+      }
+      return;
+    }
+
+    // 在线大模型模式
+    if (compareMode) {
+      if (compareModels.length === 0) {
+        showToast('请至少选择一个模型进行对比！', 'error');
         return;
       }
-
       setGenerating(true);
-      setLastRouteInfo(null);
-      let selectedPrompt = fallbackPrompt;
-      let promptGeneratedByAI = false;
+      setCompareResults([]);
+      showToast(`正在并行调用 ${compareModels.length} 个大模型生成对比结果...`, 'info');
 
       try {
-        const fallbackQueue = await prepareFallbackQueue();
-        if (fallbackQueue.length === 0) {
-          showToast('⚠️ 当前上游没有可用模型，已改用本地内置 Prompt。', 'info');
-        }
-
-        for (let attemptIndex = 0; attemptIndex < fallbackQueue.length; attemptIndex++) {
-          const modelToTry = fallbackQueue[attemptIndex];
+        const promises = compareModels.map(async (modelId) => {
           try {
-            showToast(
-              attemptIndex === 0
-                ? `🤖 正在用大模型 [${formatSelectedModel(modelToTry)}] 生成豆包 Prompt...`
-                : `🔁 正在切换到 [${formatSelectedModel(modelToTry)}] 重试生成 Prompt...`,
-              'info'
-            );
-            const resData = await requestGenerate(modelToTry, { mode: 'doubao_prompt', ...overrides });
-            if (resData.success && resData.content) {
-              selectedPrompt = resData.content;
-              promptGeneratedByAI = true;
-              const routeInfo: RouteInfo = resData.routeInfo
-                ? { ...resData.routeInfo, status: 'success' }
-                : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
-              setLastRouteInfo(routeInfo);
-              break;
-            }
-          } catch (error: any) {
-            const routeInfo: RouteInfo = error.routeInfo
-              ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
-              : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error', statusCode: error.statusCode, errorType: classifyGenerateError(error.message, error.statusCode) };
-            setLastRouteInfo(routeInfo);
-            if (attemptIndex < fallbackQueue.length - 1) {
-              showToast(`⚠️ ${formatSelectedModel(modelToTry)} ${formatErrorReason(error.message, routeInfo)}，正在尝试下一个模型...`, 'info');
-            }
+            const resData = await requestGenerate(modelId, overrides);
+            return {
+              id: modelId,
+              requestedModel: modelId,
+              title: resData.title,
+              content: resData.content,
+              routeInfo: resData.routeInfo ? { ...resData.routeInfo, status: 'success' } : { requestedModel: modelId, actualModel: modelId, status: 'success' }
+            } as CompareResult;
+          } catch (err: any) {
+            return {
+              id: modelId,
+              requestedModel: modelId,
+              error: err.message || '请求失败',
+              routeInfo: err.routeInfo ? { ...err.routeInfo, requestedModel: err.routeInfo.requestedModel || modelId, status: 'error', statusCode: err.statusCode || err.routeInfo.statusCode, errorType: err.routeInfo.errorType || classifyGenerateError(err.message, err.statusCode) } : { requestedModel: modelId, actualModel: modelId, status: 'error', statusCode: err.statusCode, errorType: classifyGenerateError(err.message, err.statusCode) }
+            } as CompareResult;
           }
+        });
+
+        const results = await Promise.all(promises);
+        setCompareResults(results);
+
+        const successCount = results.filter((r) => !r.error && r.content).length;
+        if (successCount > 0) {
+          showToast(`多方案比对完成：成功 ${successCount} 个，失败 ${results.length - successCount} 个`, 'success');
+        } else {
+          showToast('所有对比模型请求均未成功，请检查网络或 API 密钥', 'error');
         }
       } finally {
         setGenerating(false);
       }
-
-      setContent(selectedPrompt);
-      showToast(
-        promptGeneratedByAI
-          ? '📋 大模型 Prompt 已生成完成，请点击下方按钮复制并前往豆包。'
-          : '📋 大模型不可用，已生成本地内置 Prompt，请点击下方按钮复制并前往豆包。',
-        promptGeneratedByAI ? 'success' : 'info'
-      );
-      return;
-    }
-
-    if (aiSettings.aiEnabled) {
-      if (!aiSettings.aiApiKey) {
-        showToast('⚠️ 已开启 AI 模式，但尚未配置 API Key！请前往《个性化配置》填写您的 OpenRouter Key。', 'error');
-        if (onNavigateToTab) onNavigateToTab('settings');
-        return;
-      }
+    } else {
+      // 单模型生成 + 自动重试降级链
       setGenerating(true);
-      setLastRouteInfo(null);
-      const fallbackQueue = await prepareFallbackQueue();
-      if (fallbackQueue.length === 0) {
-        setGenerating(false);
-        showToast('⚠️ 当前上游没有可用模型，请先在《个性化配置》同步模型列表或手动填写真实模型 ID。', 'error');
-        if (onNavigateToTab) onNavigateToTab('settings');
-        return;
-      }
-      showToast(`🤖 正在联调大模型 [${formatSelectedModel(fallbackQueue[0])}] 生成日报...`, 'info');
-      let lastError: any = null;
-
       try {
-        if (compareMode) {
-          const sourceModels = compareModels.length > 0 ? compareModels : fallbackQueue;
-          const selectedModels = Array.from(
-            new Set(
-              sourceModels
-                .map((modelId) => normalizeModelId(modelId, aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl))
-                .filter((modelId) => !LEGACY_INVALID_MODELS.has(modelId))
-            )
-          ).slice(0, 3);
-          
-          setCompareResults([]);
-          showToast(`🧪 正在同时对比 ${selectedModels.length} 个模型，请稍候...`, 'info');
+        const fallbackQueue = buildFallbackQueue(aiSettings.aiModel, modelList, aiSettings.aiApiUrl, DEFAULT_AI_MODEL, isOpenRouterApiUrl);
+        let lastError: any = null;
 
-          const settledResults = await Promise.allSettled(
-            selectedModels.map(async (modelToTry, index) => {
-              const resData = await requestGenerate(modelToTry, overrides);
-              if (!resData.success) {
-                throw new Error('模型返回失败');
-              }
-              const routeInfo: RouteInfo = resData.routeInfo
-                ? { ...resData.routeInfo, status: 'success' }
-                : { requestedModel: modelToTry, actualModel: modelToTry, status: 'success' };
-              return {
-                id: `${modelToTry}-${index}-${Date.now()}`,
-                requestedModel: modelToTry,
-                title: resData.title,
-                content: resData.content,
-                routeInfo
-              } as CompareResult;
-            })
-          );
-
-          const results: CompareResult[] = settledResults.map((result, index) => {
-            const requestedModel = selectedModels[index];
-            if (result.status === 'fulfilled') {
-              return result.value;
-            }
-            const reason: any = result.reason;
-            const routeInfo: RouteInfo = reason?.routeInfo
-              ? { ...reason.routeInfo, requestedModel: reason.routeInfo.requestedModel || requestedModel, status: 'error', statusCode: reason.statusCode || reason.routeInfo.statusCode, errorType: reason.routeInfo.errorType || classifyGenerateError(reason.message, reason.statusCode) }
-              : { requestedModel, actualModel: requestedModel, status: 'error', statusCode: reason.statusCode, errorType: classifyGenerateError(reason.message, reason.statusCode) };
-            return {
-              id: `${requestedModel}-${index}-${Date.now()}`,
-              requestedModel,
-              error: reason.message || '模型返回错误',
-              routeInfo
-            } as CompareResult;
-          });
-
-          setCompareResults(results);
-          const successCount = results.filter((r) => !r.error).length;
-          if (successCount > 0) {
-            const firstSuccess = results.find((r) => !r.error);
-            if (firstSuccess && firstSuccess.title && firstSuccess.content) {
-              setTitle(firstSuccess.title);
-              setHours(8);
-              setCooperation(userInput.includes('对接') || userInput.includes('联调') || userInput.includes('走查') || userInput.includes('切图'));
-              setDifficulty(userInput.includes('bug') || userInput.includes('重构') || userInput.includes('走查'));
-              setContent(firstSuccess.content);
-              if (firstSuccess.routeInfo) setLastRouteInfo(firstSuccess.routeInfo);
-              setSessionHistory((prev) => {
-                const next = [...prev, firstSuccess.content || ''];
-                if (next.length > 8) next.shift();
-                return next;
-              });
-            }
-            showToast(`🧪 对比生成完成！已加载首个成功大模型 [${formatSelectedModel(firstSuccess?.requestedModel || '')}] 结果，您可在右下角切换对比。`, 'success');
-          } else {
-            showToast('❌ 所有对比模型全部请求失败，请核对网络或 API 密钥！', 'error');
-          }
+        if (fallbackQueue.length === 0) {
+          showToast('当前没有可用的模型 ID，请先在模型列表选择或输入模型。', 'error');
+          setGenerating(false);
           return;
         }
 
@@ -444,7 +454,7 @@ export function useAIGeneration({
           const modelToTry = fallbackQueue[attemptIndex];
           try {
             if (attemptIndex > 0) {
-              showToast(`🔁 正在切换到降级模型 [${formatSelectedModel(modelToTry)}] 重试生成...`, 'info');
+              showToast(`正在切换到降级模型 [${formatSelectedModel(modelToTry)}] 重试生成...`, 'info');
             }
             const resData = await requestGenerate(modelToTry, overrides);
             if (resData.success && resData.content) {
@@ -462,7 +472,7 @@ export function useAIGeneration({
                 if (next.length > 8) next.shift();
                 return next;
               });
-              showToast(`🎉 日报已通过 [${formatSelectedModel(modelToTry)}] 生成完毕！`, 'success');
+              showToast(`工作事项已通过 [${formatSelectedModel(modelToTry)}] 整理排版完毕！`, 'success');
               lastError = null;
               break;
             }
@@ -473,13 +483,13 @@ export function useAIGeneration({
               : { requestedModel: modelToTry, actualModel: modelToTry, status: 'error', statusCode: error.statusCode, errorType: classifyGenerateError(error.message, error.statusCode) };
             setLastRouteInfo(routeInfo);
             if (attemptIndex < fallbackQueue.length - 1) {
-              showToast(`⚠️ ${formatSelectedModel(modelToTry)} ${formatErrorReason(error.message, routeInfo)}，正在自动降级重试...`, 'info');
+              showToast(`${formatSelectedModel(modelToTry)} ${formatErrorReason(error.message, routeInfo)}，正在自动降级重试...`, 'info');
             }
           }
         }
 
         if (lastError) {
-          showToast(`❌ 生成失败：${lastError.message || '全部降级模型均不可用'}`, 'error');
+          showToast(`生成失败：${lastError.message || '全部降级模型均不可用'}`, 'error');
         }
       } finally {
         setGenerating(false);
@@ -504,6 +514,16 @@ export function useAIGeneration({
     toggleCompareModel,
     applyCompareResult,
     refreshAvailableModels,
-    handleGenerate
+    handleGenerate,
+    
+    // 方向罗盘导出
+    directions,
+    selectedDirectionId,
+    selectedDirection,
+    selectDirection,
+    isFetchingDirections,
+    fetchDirections,
+    customDirectionNote,
+    setCustomDirectionNote
   };
 }

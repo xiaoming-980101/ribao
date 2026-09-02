@@ -4,15 +4,13 @@ import {
   saveLog,
   saveSettings,
   isOpenRouterApiUrl,
-  DEFAULT_AI_API_URL,
   DEFAULT_AI_MODEL
 } from '../utils/storage';
 import {
   expandUserInput,
   generateRandomFrontendDaily,
   calculateSimilarity,
-  getSimilarityLevel,
-  getJobDisplayName
+  getSimilarityLevel
 } from '../utils/generator';
 
 import { useSimilarityCheck } from '../hooks/useSimilarityCheck';
@@ -88,7 +86,14 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     handleQuickChangeModel,
     toggleCompareModel,
     applyCompareResult,
-    handleGenerate
+    handleGenerate,
+    directions,
+    selectedDirectionId,
+    selectDirection,
+    isFetchingDirections,
+    fetchDirections,
+    customDirectionNote,
+    setCustomDirectionNote
   } = useAIGeneration({
     appData,
     userInput,
@@ -111,8 +116,12 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   // 选项联动保存配置
   const handleJobChange = async (newJob: string) => {
     setJob(newJob);
+    const newCustom = newJob === 'custom' ? customJobName : '';
+    if (newJob !== 'custom') {
+      setCustomJobName('');
+    }
     try {
-      await saveSettings({ job: newJob, customJobName, tone });
+      await saveSettings({ job: newJob, customJobName: newCustom, tone });
       onSaveSuccess();
     } catch (e) {
       console.error('静默保存岗位失败:', e);
@@ -155,6 +164,15 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     setSelectedDate(`${yyyy}-${mm}-${dd}`);
   }, []);
 
+  // 切换工作状态模式时，清空预览区内容，避免上一个模式的生成结果（尤其是豆包提示词）残留
+  useEffect(() => {
+    setTitle('');
+    setContent('');
+    setHours(8);
+    setCooperation(false);
+    setDifficulty(false);
+  }, [mode]);
+
   // 自动加载该日期的日志
   useEffect(() => {
     if (selectedDate) {
@@ -174,6 +192,30 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       }
     }
   }, [selectedDate, appData.logs]);
+
+  // 全局快捷键支持: Ctrl+Enter 生成, Ctrl+S 归档
+  const shortcutsRef = React.useRef<{ handleGenerateWrapper: () => void; handleSave: () => void }>({
+    handleGenerateWrapper: () => {},
+    handleSave: () => {}
+  });
+  useEffect(() => {
+    shortcutsRef.current = { handleGenerateWrapper, handleSave };
+  });
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        shortcutsRef.current.handleGenerateWrapper();
+      }
+      if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S')) {
+        e.preventDefault();
+        shortcutsRef.current.handleSave();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
 
   // 快速选择日期
   const setQuickDate = (offset: number) => {
@@ -335,7 +377,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
 
     if (maxSimilarity >= appData.settings.similarityThreshold) {
       const confirmSave = window.confirm(
-        `⚠️ 考勤高危警告：\n\n当前日志内容与 [${similarDate}] 的历史日志相似度高达 ${maxSimilarity}%！\n这已超过了您在配置中设定的高危报警线 (${appData.settings.similarityThreshold}%)。\n\n如果直接提交，极易被公司考勤抽查判定为“敷衍、抄袭或重复填报”而导致扣绩效分。\n\n您确定要强行保存吗？`
+        `考勤高危警告：\n\n当前日志内容与 [${similarDate}] 的历史日志相似度高达 ${maxSimilarity}%！\n这已超过了您在配置中设定的高危报警线 (${appData.settings.similarityThreshold}%)。\n\n如果直接提交，极易被公司考勤抽查判定为“敷衍、抄袭或重复填报”而导致扣绩效分。\n\n您确定要强行保存吗？`
       );
       if (!confirmSave) {
         return;
@@ -363,12 +405,12 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         if (next.length > 8) next.shift();
         return next;
       });
-      showToast('🎉 日报已成功保存并物理落盘至 db.json！', 'success');
+      showToast('日报已成功保存并物理落盘至 db.json！', 'success');
       onSaveSuccess();
       setTimeout(() => setSaveStatus('idle'), 2000);
     } else {
       setSaveStatus('error');
-      showToast('❌ 保存失败，请确认后端 API 服务已正常开启！', 'error');
+      showToast('保存失败，请确认后端 API 服务已正常开启！', 'error');
       setTimeout(() => setSaveStatus('idle'), 2000);
     }
   };
@@ -390,9 +432,9 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       `}} />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
-          <h2 style={{ fontSize: '24px', fontWeight: '800' }}>智能日报生成器</h2>
+          <h2 style={{ fontSize: '24px', fontWeight: '800' }}>工作事项整理工作台</h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '14px', marginTop: '4px' }}>
-            根据您的每日任务进行润色，或者一键生成免抽查、绝不重复的日常工作日志。
+            支持规范整理每日研发工作流，结构化记录事项过程、工时与交付物。
           </p>
         </div>
       </div>
@@ -418,6 +460,13 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             generating={generating}
             handleGenerate={handleGenerateWrapper}
             onNavigateToTab={onNavigateToTab}
+            directions={directions}
+            selectedDirectionId={selectedDirectionId}
+            selectDirection={selectDirection}
+            isFetchingDirections={isFetchingDirections}
+            fetchDirections={fetchDirections}
+            customDirectionNote={customDirectionNote}
+            setCustomDirectionNote={setCustomDirectionNote}
           />
           <AIModelControls
             aiSettings={aiSettings}

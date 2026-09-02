@@ -1,0 +1,399 @@
+{
+  "version": "1.0.0",
+  "lastScanned": 1788246571297,
+  "projectRoot": "D:\\ai\\_apps\\ribao",
+  "techStack": {
+    "languages": [
+      {
+        "name": "JavaScript/TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "package.json"
+        ]
+      },
+      {
+        "name": "TypeScript",
+        "version": null,
+        "confidence": "high",
+        "markers": [
+          "tsconfig.json"
+        ]
+      }
+    ],
+    "frameworks": [
+      {
+        "name": "express",
+        "version": "4.19.2",
+        "category": "backend"
+      },
+      {
+        "name": "react",
+        "version": "18.2.0",
+        "category": "frontend"
+      },
+      {
+        "name": "react-dom",
+        "version": "18.2.0",
+        "category": "frontend"
+      },
+      {
+        "name": "vite",
+        "version": "5.1.6",
+        "category": "build"
+      },
+      {
+        "name": "vitest",
+        "version": "1.3.1",
+        "category": "testing"
+      }
+    ],
+    "packageManager": "npm",
+    "runtime": null
+  },
+  "build": {
+    "buildCommand": "npx tsc --noEmit 2>&1 | head -40; echo \"=== TSC EXIT: $? ===\"",
+    "testCommand": "npm test 2>&1 | tail -50",
+    "lintCommand": "npm run lint",
+    "devCommand": "npm run dev",
+    "scripts": {
+      "dev": "vite",
+      "build": "vite build",
+      "preview": "vite preview",
+      "server": "node server.js",
+      "lint": "eslint . --ext .ts,.tsx",
+      "lint:fix": "eslint . --ext .ts,.tsx --fix",
+      "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"server.js\"",
+      "test": "vitest run"
+    }
+  },
+  "conventions": {
+    "namingStyle": null,
+    "importStyle": null,
+    "testPattern": null,
+    "fileOrganization": "type-based"
+  },
+  "structure": {
+    "isMonorepo": false,
+    "workspaces": [],
+    "mainDirectories": [
+      "docs",
+      "src"
+    ],
+    "gitBranches": {
+      "defaultBranch": "main",
+      "branchingStrategy": null
+    }
+  },
+  "customNotes": [],
+  "directoryMap": {
+    "dist": {
+      "path": "dist",
+      "purpose": "Distribution/build output",
+      "fileCount": 1,
+      "lastAccessed": 1788246571028,
+      "keyFiles": [
+        "index.html"
+      ]
+    },
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1788246571029,
+      "keyFiles": [
+        "refactor-plan.md"
+      ]
+    },
+    "server": {
+      "path": "server",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1788246571029,
+      "keyFiles": [
+        "config.js",
+        "db.js",
+        "index.js"
+      ]
+    },
+    "src": {
+      "path": "src",
+      "purpose": "Source code",
+      "fileCount": 3,
+      "lastAccessed": 1788246571029,
+      "keyFiles": [
+        "App.tsx",
+        "index.css",
+        "main.tsx"
+      ]
+    },
+    "dist\\assets": {
+      "path": "dist\\assets",
+      "purpose": "Static assets",
+      "fileCount": 2,
+      "lastAccessed": 1788246571029,
+      "keyFiles": [
+        "index-CFZLylF4.js",
+        "index-Drcrmc3_.css"
+      ]
+    },
+    "server\\middleware": {
+      "path": "server\\middleware",
+      "purpose": "Middleware",
+      "fileCount": 2,
+      "lastAccessed": 1788246571030,
+      "keyFiles": [
+        "auth.js",
+        "rateLimit.js"
+      ]
+    },
+    "server\\routes": {
+      "path": "server\\routes",
+      "purpose": "Route handlers",
+      "fileCount": 3,
+      "lastAccessed": 1788246571030,
+      "keyFiles": [
+        "ai.js",
+        "auth.js",
+        "data.js"
+      ]
+    },
+    "server\\utils": {
+      "path": "server\\utils",
+      "purpose": "Utility functions",
+      "fileCount": 3,
+      "lastAccessed": 1788246571030,
+      "keyFiles": [
+        "aiPrompt.js",
+        "modelUtils.js",
+        "password.js"
+      ]
+    },
+    "src\\components": {
+      "path": "src\\components",
+      "purpose": "UI components",
+      "fileCount": 6,
+      "lastAccessed": 1788246571030,
+      "keyFiles": [
+        "DailyGenerator.tsx",
+        "HistoryCalendar.tsx",
+        "LoginModal.tsx"
+      ]
+    },
+    "src\\types": {
+      "path": "src\\types",
+      "purpose": "Type definitions",
+      "fileCount": 1,
+      "lastAccessed": 1788246571030,
+      "keyFiles": [
+        "ai.ts"
+      ]
+    },
+    "src\\utils": {
+      "path": "src\\utils",
+      "purpose": "Utility functions",
+      "fileCount": 5,
+      "lastAccessed": 1788246571030,
+      "keyFiles": [
+        "clipboard.ts",
+        "excelImporter.ts",
+        "generator.ts"
+      ]
+    }
+  },
+  "hotPaths": [
+    {
+      "path": "package.json",
+      "accessCount": 3,
+      "lastAccessed": 1788248754149,
+      "type": "file"
+    },
+    {
+      "path": "server\\db.js",
+      "accessCount": 2,
+      "lastAccessed": 1788248720988,
+      "type": "file"
+    },
+    {
+      "path": "server\\routes\\ai.js",
+      "accessCount": 2,
+      "lastAccessed": 1788248727907,
+      "type": "file"
+    },
+    {
+      "path": "vite.config.ts",
+      "accessCount": 2,
+      "lastAccessed": 1788248752285,
+      "type": "file"
+    },
+    {
+      "path": "tsconfig.json",
+      "accessCount": 2,
+      "lastAccessed": 1788248753609,
+      "type": "file"
+    },
+    {
+      "path": "src\\components\\HistoryCalendar.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1788248680075,
+      "type": "file"
+    },
+    {
+      "path": "src\\hooks\\useAIGeneration.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788248680274,
+      "type": "file"
+    },
+    {
+      "path": "C:\\Users\\user\\AppData\\Local\\Temp\\claude\\D--ai--apps-ribao\\d0b7647c-6efc-49b8-9d6f-c9f2ffa54b90\\tasks\\bc2ilezih.output",
+      "accessCount": 1,
+      "lastAccessed": 1788248716127,
+      "type": "file"
+    },
+    {
+      "path": "server\\index.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248721091,
+      "type": "file"
+    },
+    {
+      "path": "server\\routes\\auth.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248722129,
+      "type": "file"
+    },
+    {
+      "path": "server\\routes\\data.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248722176,
+      "type": "file"
+    },
+    {
+      "path": "src\\utils\\storage.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788248729892,
+      "type": "file"
+    },
+    {
+      "path": "src\\components\\DailyGenerator.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1788248729965,
+      "type": "file"
+    },
+    {
+      "path": "src\\utils\\__tests__\\generator.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788248730874,
+      "type": "file"
+    },
+    {
+      "path": "src\\utils\\__tests__\\excelImporter.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788248731866,
+      "type": "file"
+    },
+    {
+      "path": "server\\config.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248732193,
+      "type": "file"
+    },
+    {
+      "path": "server\\middleware\\auth.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248732420,
+      "type": "file"
+    },
+    {
+      "path": "server\\middleware\\rateLimit.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248733407,
+      "type": "file"
+    },
+    {
+      "path": "src\\utils\\__tests__\\storage.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788248733447,
+      "type": "file"
+    },
+    {
+      "path": "src\\utils\\__tests__\\tweak_and_parser.test.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788248733493,
+      "type": "file"
+    },
+    {
+      "path": "server\\utils\\modelUtils.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248734157,
+      "type": "file"
+    },
+    {
+      "path": "server\\utils\\password.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248734235,
+      "type": "file"
+    },
+    {
+      "path": "src\\hooks\\useSimilarityCheck.ts",
+      "accessCount": 1,
+      "lastAccessed": 1788248749227,
+      "type": "file"
+    },
+    {
+      "path": "src\\components\\daily\\AIModelControls.tsx",
+      "accessCount": 1,
+      "lastAccessed": 1788248749769,
+      "type": "file"
+    },
+    {
+      "path": "docker-compose.yml",
+      "accessCount": 1,
+      "lastAccessed": 1788248752702,
+      "type": "file"
+    },
+    {
+      "path": "server\\utils\\aiPrompt.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248753021,
+      "type": "file"
+    },
+    {
+      "path": ".env.example",
+      "accessCount": 1,
+      "lastAccessed": 1788248753201,
+      "type": "file"
+    },
+    {
+      "path": ".eslintignore",
+      "accessCount": 1,
+      "lastAccessed": 1788248753241,
+      "type": "file"
+    },
+    {
+      "path": ".eslintrc.cjs",
+      "accessCount": 1,
+      "lastAccessed": 1788248753384,
+      "type": "file"
+    },
+    {
+      "path": "Dockerfile",
+      "accessCount": 1,
+      "lastAccessed": 1788248753475,
+      "type": "file"
+    },
+    {
+      "path": "server.js",
+      "accessCount": 1,
+      "lastAccessed": 1788248753520,
+      "type": "file"
+    },
+    {
+      "path": ".prettierrc",
+      "accessCount": 1,
+      "lastAccessed": 1788248753670,
+      "type": "file"
+    }
+  ],
+  "userDirectives": []
+}

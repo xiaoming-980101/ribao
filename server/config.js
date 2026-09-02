@@ -13,3 +13,5 @@ export const LEGACY_INVALID_MODELS = new Set([
 ]);
 export const BCRYPT_ROUNDS = 10;
 export const DIST_PATH = path.join(__dirname, '..', 'dist');
+export const TOKEN_SECRET = process.env.TOKEN_SECRET || 'winner_daily_secret_jwt_hmac_2026_salt';
+export const BACKUP_DIR = path.join(__dirname, '..', 'backups');

@@ -1,0 +1,45 @@
+import { describe, it, expect } from 'vitest';
+import { parseGeneratedLog } from '../../../server/utils/aiPrompt.js';
+
+describe('parseGeneratedLog & Tweak Format Robustness Tests', () => {
+  it('应正确解析标准 标题 + 内容 格式', () => {
+    const raw = '标题：页面样式与布局适配调优\n内容：今天排查了不同机型下的布局错位问题，优化了弹性盒自适应逻辑，本地自测正常。';
+    const res = parseGeneratedLog(raw, '原标题', '原内容');
+    expect(res.title).toBe('页面样式与布局适配调优');
+    expect(res.content).toBe('今天排查了不同机型下的布局错位问题，优化了弹性盒自适应逻辑，本地自测正常。');
+    expect(res.content).not.toContain('标题：');
+  });
+
+  it('当大模型截断只输出了标题时，必须保留原内容，绝不能把标题内容塞入正文', () => {
+    const raw = '标题：多条件筛选分页联动优化';
+    const originalContent = '今天主要调试了数据看板多条件筛选与分页的联动逻辑，解决了重置搜索条件时页码未归位的问题，核对了查询参数的传递格式，本地回归测试正常。';
+    const res = parseGeneratedLog(raw, '多条件筛选分页联动优化', originalContent);
+    expect(res.title).toBe('多条件筛选分页联动优化');
+    expect(res.content).toBe(originalContent);
+    expect(res.content).not.toContain('标题：');
+  });
+
+  it('应正确解析带 Markdown 加粗的 **标题** 与 **内容**', () => {
+    const raw = '**标题**：新接口数据联调与报错兜底\n**内容**：配合后端联调了新接口，核对了字段结构，并增加了异常空态提示。';
+    const res = parseGeneratedLog(raw);
+    expect(res.title).toBe('新接口数据联调与报错兜底');
+    expect(res.content).toBe('配合后端联调了新接口，核对了字段结构，并增加了异常空态提示。');
+  });
+
+  it('当大模型直接输出连贯的一段话而没有标题前缀时，应正确解析', () => {
+    const raw = '今天主要跟进处理了测试提测反馈的几处交互缺陷，修复了弹窗关闭后状态未及时重置的偶发问题，已在测试环境验证通过。';
+    const res = parseGeneratedLog(raw, '默认标题', '默认内容');
+    expect(res.content).toBe(raw);
+    expect(res.title.length).toBeGreaterThan(0);
+  });
+
+  it('当大模型输出带有 1. 2. 序号时，自动清洗为自然连贯的一段话', () => {
+    const raw = '标题：表单输入校验排查\n内容：\n1. 排查了表单切换时的必填校验遗漏。\n2. 优化了下拉联动与禁用态逻辑。\n3. 本地自测通过。';
+    const res = parseGeneratedLog(raw);
+    expect(res.title).toBe('表单输入校验排查');
+    expect(res.content).not.toContain('1.');
+    expect(res.content).not.toContain('2.');
+    expect(res.content).not.toContain('3.');
+    expect(res.content).toContain('排查了表单切换时的必填校验遗漏');
+  });
+});

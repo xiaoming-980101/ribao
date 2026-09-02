@@ -11,21 +11,122 @@ import {
   createGenerateError,
   extractRouteInfoFromApiData,
 } from '../utils/modelUtils.js';
-import { getJobDisplayName, buildTaskSeed, parseGeneratedLog } from '../utils/aiPrompt.js';
+import { getJobDisplayName, buildPrompts, parseGeneratedLog, buildDirectionsPrompt, parseDirections, buildTaskSeed } from '../utils/aiPrompt.js';
 
 const router = express.Router();
 
 // 统一应用鉴权中间件
 router.use(authMiddleware);
 
-// API: 在线调用 AI 生成日报
-router.post('/generate', async (req, res) => {
+// API: 获取 AI 启发式工作方向推荐 (5 个切入点卡片)
+router.post('/directions', async (req, res) => {
   const username = req.username;
-  const { userInput, job, customJobName, tone, mode, currentTitle, currentContent, aiApiKey, aiApiUrl, aiModel } = req.body;
+  const {
+    job,
+    customJobName,
+    mode,
+    recentLogs,
+    aiApiKey,
+    aiApiUrl,
+    aiModel
+  } = req.body;
 
   const db = readDB();
   const user = db.users[username];
 
+  const finalApiKey = aiApiKey || user?.settings?.aiApiKey;
+  const finalApiUrl = aiApiUrl || user?.settings?.aiApiUrl || DEFAULT_AI_API_URL;
+  const fallbackModel = isOpenRouterApiUrl(finalApiUrl) ? DEFAULT_AI_MODEL : '';
+  const finalApiModel = normalizeModelId(aiModel || user?.settings?.aiModel || fallbackModel, finalApiUrl);
+
+  let historyLogs = Array.isArray(recentLogs) ? recentLogs : [];
+  if (historyLogs.length === 0 && user && user.logs) {
+    historyLogs = Object.entries(user.logs)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .slice(0, 10)
+      .map(([date, item]) => ({
+        date,
+        title: item.title,
+        content: item.content
+      }));
+  }
+
+  // 如果未配置 API Key，直接使用高质量内置方向引擎返回
+  if (!finalApiKey || !finalApiModel) {
+    const directions = parseDirections('', job, mode, customJobName);
+    return res.json({ success: true, directions, isOffline: true });
+  }
+
+  const { systemPrompt, userPrompt } = buildDirectionsPrompt({
+    job,
+    customJobName,
+    mode,
+    recentLogs: historyLogs
+  });
+
+  try {
+    const apiBaseUrl = finalApiUrl || 'https://openrouter.ai/api/v1';
+    const apiUrl = apiBaseUrl.endsWith('/') ? apiBaseUrl + 'chat/completions' : apiBaseUrl + '/chat/completions';
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${finalApiKey}`
+      },
+      body: JSON.stringify({
+        model: finalApiModel || DEFAULT_AI_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.85,
+        max_tokens: 1200
+      }),
+      signal: AbortSignal.timeout(180000)
+    });
+
+    if (!response.ok) {
+      console.warn(`AI directions upstream returned ${response.status}, fallback to local scenario pool`);
+      const directions = parseDirections('', job, mode, customJobName);
+      return res.json({ success: true, directions, isOffline: true });
+    }
+
+    const apiData = await response.json();
+    const dirMsg = apiData.choices?.[0]?.message;
+    const contentVal = (dirMsg?.content || dirMsg?.reasoning || '');
+    const directions = parseDirections(contentVal, job, mode, customJobName);
+
+    res.json({ success: true, directions, isOffline: false });
+  } catch (error) {
+    console.warn('AI directions request failed, fallback to local scenario pool:', error);
+    const directions = parseDirections('', job, mode, customJobName);
+    res.json({ success: true, directions, isOffline: true });
+  }
+});
+
+// API: 在线调用 AI 生成日报
+router.post('/generate', async (req, res) => {
+  const username = req.username;
+  const {
+    userInput,
+    job,
+    customJobName,
+    tone,
+    mode,
+    currentTitle,
+    currentContent,
+    recentLogs,
+    aiApiKey,
+    aiApiUrl,
+    aiModel
+  } = req.body;
+
+  const db = readDB();
+  const user = db.users[username];
+
+  const finalJob = job || user.settings.job || 'frontend';
+  const finalCustomJobName = finalJob === 'custom' ? (customJobName || user.settings.customJobName || '') : '';
   const finalApiKey = aiApiKey || user.settings.aiApiKey;
   const finalApiUrl = aiApiUrl || user.settings.aiApiUrl || DEFAULT_AI_API_URL;
   const fallbackModel = isOpenRouterApiUrl(finalApiUrl) ? DEFAULT_AI_MODEL : '';
@@ -61,85 +162,28 @@ router.post('/generate', async (req, res) => {
     });
   }
 
-  const jobName = getJobDisplayName(job, customJobName);
-  const isTweakMode = mode === 'tweak';
-  const promptTaskMode = isDoubaoPromptMode ? 'idle' : mode;
-  const tasksText = (isTweakMode || isDoubaoPromptMode) ? '' : buildTaskSeed(userInput, job, promptTaskMode, customJobName);
-  const doubaoTasksText = buildTaskSeed(userInput, job, userInput && String(userInput).trim() ? 'task' : 'idle', customJobName);
+  let historyLogs = Array.isArray(recentLogs) ? recentLogs : [];
+  if (historyLogs.length === 0 && user && user.logs) {
+    historyLogs = Object.entries(user.logs)
+      .sort(([a], [b]) => b.localeCompare(a))
+      .slice(0, 10)
+      .map(([date, item]) => ({
+        date,
+        title: item.title,
+        content: item.content
+      }));
+  }
 
-  const examples = job === 'designer' ? `
-* 不推荐（太虚太浮夸）：
-“针对产品核心展示模块进行了全方位的交互体验设计与视觉包装升级，构建了高复用的视觉规范，显著提升了页面在跨终端环境下的用户体感和开发对接效率。”
-* 推荐（写实自然）：
-“上午把几个历史页面的视觉稿翻出来重新核了下间距和字号，顺手把图层命名和组件分组理顺了。下午对照产品线框补了两个状态页的小细节，又把切图和标注整理了一版，方便后面开发同事对照。”
-` : (job === 'tester' ? `
-* 不推荐（太虚太浮夸）：
-“围绕本版本核心质量保障体系开展了全链路验证，显著提升了系统稳定性与交付可信度，为业务上线提供了坚实保障。”
-* 推荐（写实自然）：
-“上午按测试用例把登录和列表流程重新跑了一遍，把两个异常提示不一致的问题记录了下来。下午复测了昨天修的几个 Bug，补了截图和复现步骤，方便开发继续跟。”
-` : `
-* 不推荐（太虚太浮夸）：
-“深度重构了系统核心列表渲染组件，引入了基于虚拟滚动的高效异步加载算法，成功缩减了打包体积，显著优化了页面在低端机型下的首屏交互流畅度。”
-* 推荐（写实自然）：
-“上午把几个历史页面在不同宽度下的展示看了一遍，顺手调了下按钮间距和空状态文案。下午清理了控制台里几个重复警告，把公共组件的入参又核了一遍，最后在本地跑了下常用流程回归。”
-`);
-
-  const toneHint = tone === 'daily'
-    ? '语气可以更像自然流水账，但仍要具体、可信，不要过度口语到像聊天。'
-    : '语气保持专业严谨，但不要官腔、不要夸大成果。';
-
-  const systemPrompt = isDoubaoPromptMode
-    ? `你是一个专业提示词工程师，熟悉 ${jobName} 的公司日报写作。`
-    : `你是一个专业 ${jobName}，擅长把当天真实工作记录整理成平实、具体、有执行细节的公司内部日报。`;
-  const userPrompt = isDoubaoPromptMode ? `请生成一段可以直接复制到豆包的新对话里使用的中文提示词，目标是让豆包帮我写一份 ${jobName} 的公司内部日报。
-
-今日工作记录：${doubaoTasksText}
-
-生成提示词要求：
-1. 提示词要以“你是一个专业 ${jobName}”开头，用户复制后可以直接发给豆包。
-2. 提示词里要明确要求豆包输出“标题”和“内容”，内容必须是 3 条，每条 45 到 70 个中文字左右。
-3. 语气要求：${toneHint}
-4. 重点要求写实、具体、有过程，不要夸张成果，不要编造数据、奖项或上线影响。
-5. 如果今日工作记录偏日常维护，也要让豆包自然补充检查、整理、复测、归档等合理细节。
-6. 只输出最终提示词本身，不要解释、不要 Markdown 代码块、不要前后缀说明。` : (isTweakMode ? `请对下面这份已经生成好的日报做“轻微微调”，目标是降低重复感、让表达更自然，但不要改岗位、不要换主题、不要增加夸张成果或编造不存在的工作。
-
-当前标题：${String(currentTitle || '').trim() || '未填写'}
-
-当前内容：
-${String(currentContent || '').trim()}
-
-微调要求：
-1. ${toneHint}
-2. 保留原本工作事实和大致结构，只替换部分措辞、补一点具体过程或检查结果。
-3. 必须仍然写成 3 条内容，每条 45 到 70 个中文字左右，总体约 170 到 230 字。
-4. 不要把内容改成本地模板式“日常维护”，也不要偏离当前日报已经写到的工作范围。
-5. 标题 8 到 15 个字，具体一点，可在原标题基础上小幅改写。
-
-请严格按照以下格式直接输出（不要有任何多余的 Markdown 代码块或前后缀解释说明）：
-标题：[微调后的日志标题]
-内容：
-1. [第一条微调后的内容]
-2. [第二条微调后的内容]
-3. [第三条微调后的内容]` : `请把下面这段今日工作记录整理成一份日常工作日志。
-
-今日工作记录：${tasksText}
-
-要求：
-1. ${toneHint}
-2. 必须写成 3 条内容，每条 45 到 70 个中文字左右，总体约 170 到 230 字。
-3. 每条都要包含“做了什么 + 怎么处理 + 检查/整理结果”，不要只写“调整配置”“自测完成”这种短句。
-4. 可以在给定工作范围内补充合理执行步骤，比如核对页面、调整样式、清理日志、整理组件、联调接口、本地回归等。
-5. 标题 8 到 15 个字，具体一点，不要叫“今日工作简报”。
-
-请参考并对比以下写作风格：
-${examples}
-
-请严格按照以下格式直接输出（不要有任何多余的 Markdown 代码块或前后缀解释说明）：
-标题：[极简日志标题]
-内容：
-1. [第一条工作内容，45 到 70 个中文字，写实有过程]
-2. [第二条工作内容，45 到 70 个中文字，写实有过程]
-3. [第三条工作内容，45 到 70 个中文字，带检查或整理结果]`);
+  const { systemPrompt, userPrompt } = buildPrompts({
+    userInput,
+    job,
+    customJobName,
+    tone,
+    mode,
+    currentTitle,
+    currentContent,
+    recentLogs: historyLogs
+  });
 
   try {
     const apiBaseUrl = finalApiUrl || 'https://openrouter.ai/api/v1';
@@ -157,9 +201,10 @@ ${examples}
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        temperature: 0.7,
-        max_tokens: 500
-      })
+        temperature: 0.8,
+        max_tokens: 1500
+      }),
+      signal: AbortSignal.timeout(180000)
     });
 
     if (!response.ok) {
@@ -167,9 +212,7 @@ ${examples}
       let errData = errText;
       try {
         errData = JSON.parse(errText);
-      } catch (e) {
-        // Keep the raw text if the upstream did not return JSON.
-      }
+      } catch (e) {}
       const routeInfo = extractRouteInfoFromErrorData(errData, finalApiModel, response.headers.get('retry-after'));
       const upstreamMessage = typeof errData === 'string'
         ? errData
@@ -184,23 +227,21 @@ ${examples}
     const apiData = await response.json();
     const routeInfo = extractRouteInfoFromApiData(apiData, finalApiModel);
 
-    if (!apiData.choices || apiData.choices.length === 0 || !apiData.choices[0].message) {
-      throw createGenerateError('API 平台返回了空响应，请切换其他免费推荐大模型或稍后重试！', 502, routeInfo, 'empty');
-    }
+        const contentVal = apiData.choices?.[0]?.message?.content;
+    let rawText = typeof contentVal === 'string' ? contentVal.trim() : '';
 
-    const contentVal = apiData.choices[0].message.content;
-    if (contentVal === null || contentVal === undefined) {
-      throw createGenerateError('大模型内容被平台过滤或响应为空，请换个模型重新尝试！', 502, routeInfo, 'empty');
-    }
-
-    const rawText = contentVal.trim();
-
-    if (isSafetyPlaceholder(rawText)) {
-      throw createGenerateError('上游安全内容拦截: 大模型返回了安全审核占位词，请切换其他模型重新尝试！', 502, routeInfo, 'safety');
-    }
-
-    if (rawText.length < 15) {
-      throw createGenerateError('API 平台返回内容过短，未形成可用日报，请稍后重试或切换其他模型。', 502, routeInfo, 'empty');
+    if (!rawText || rawText.length < 10 || isSafetyPlaceholder(rawText)) {
+      console.warn('上游大模型返回空响应或占位符，自动启用本地高质量拟人引擎生成');
+      // 本地智能生成
+      const effectiveInput = userInput || buildTaskSeed('', job, mode, customJobName);
+      const fallbackTitle = (job === 'frontend' ? '前端页面交互与逻辑优化' : '日常开发与维护推进');
+      const fallbackContent = `今天主要推进了${effectiveInput.replace(/^[【“]|[”】]$/g, '')}相关工作，核对并处理了部分细节与边界交互，在本地各场景跑了一遍自测，运行一切正常。`;
+      return res.json({
+        success: true,
+        title: fallbackTitle,
+        content: fallbackContent,
+        routeInfo: { ...routeInfo, isFallback: true }
+      });
     }
 
     if (isDoubaoPromptMode) {
@@ -213,13 +254,17 @@ ${examples}
       return;
     }
 
-    const parsedLog = parseGeneratedLog(rawText);
+    const parsedLog = parseGeneratedLog(rawText, currentTitle, currentContent);
 
     res.json({ success: true, title: parsedLog.title, content: parsedLog.content, routeInfo });
   } catch (error) {
     console.error('在线 AI 生成请求失败:', error);
-    res.status(error.statusCode || 500).json({
-      error: error.message || '大模型生成请求失败',
+    const isTimeout = error.name === 'TimeoutError' || String(error.message || '').includes('timeout');
+    const finalErrorMessage = isTimeout 
+      ? '上游模型供应商轮询响应超时（已等待 3 分钟未返回），请稍后再试或切换其他模型通道。'
+      : (error.message || '大模型生成请求失败');
+    res.status(error.statusCode || (isTimeout ? 504 : 500)).json({
+      error: finalErrorMessage,
       routeInfo: error.routeInfo ? {
         ...error.routeInfo,
         statusCode: error.statusCode || error.routeInfo.statusCode,
@@ -281,6 +326,105 @@ router.post('/models', async (req, res) => {
   } catch (error) {
     console.error('获取大模型列表失败:', error);
     res.status(500).json({ error: error.message || '拉取大模型列表失败' });
+  }
+});
+
+// API: AI 智能周报提炼与结构化总结
+router.post('/weekly', async (req, res) => {
+  const username = req.username;
+  const {
+    job,
+    customJobName,
+    startDate,
+    endDate,
+    weekLogs,
+    aiApiKey,
+    aiApiUrl,
+    aiModel
+  } = req.body;
+
+  const db = readDB();
+  const user = db.users[username];
+
+  const finalJob = job || user?.settings?.job || 'frontend';
+  const finalCustom = finalJob === 'custom' ? (customJobName || user?.settings?.customJobName || '') : '';
+  const finalApiKey = aiApiKey || user?.settings?.aiApiKey;
+  const finalApiUrl = aiApiUrl || user?.settings?.aiApiUrl || DEFAULT_AI_API_URL;
+  const fallbackModel = isOpenRouterApiUrl(finalApiUrl) ? DEFAULT_AI_MODEL : '';
+  const finalApiModel = normalizeModelId(aiModel || user?.settings?.aiModel || fallbackModel, finalApiUrl);
+
+  const jobName = getJobDisplayName(finalJob, finalCustom);
+
+  if (!Array.isArray(weekLogs) || weekLogs.length === 0) {
+    return res.status(400).json({ error: '本周暂无有效事项记录可供提炼！' });
+  }
+
+  // 格式化传入的日志摘要
+  const formattedLogsText = weekLogs.map((item, idx) => {
+    return `[${item.date} (${item.dayName})] ${item.title} (工时: ${item.hours}h, 协作: ${item.cooperation ? '是' : '否'}, 难点: ${item.difficulty ? '是' : '否'})\n工作内容：\n${item.content}`;
+  }).join('\n\n---\n\n');
+
+  const systemPrompt = `你是一位严谨、资深的 ${jobName} 研发技术主管，擅长将工程师一周内琐碎的日常日志提炼、升华为结构清晰、重点突出、极具业务与工程交付价值的专业工作周报。`;
+  const userPrompt = `请根据以下工程师在 ${startDate} 至 ${endDate} 期间记录的每日工作日志，提炼并生成一份高质量的周期事项工作报告。
+
+【每日工作日志流水】：
+${formattedLogsText}
+
+【周报生成要求】：
+1. 报告必须包含以下三大部分，且各部分条理分明：
+   ### 一、本周重点交付与推进
+   （合并归类相似工作，提炼出 3-5 条具备业务价值或工程闭环的核心交付成果，不要简单照搬日记，使用量化与技术动词）
+   
+   ### 二、关键成果与协同攻坚
+   （重点提炼攻克的技术难点、系统调优、慢查询/并发/边界Bug排查，以及跨团队/前后端协同交付成果；若无明显难点则总结常规质量保障）
+   
+   ### 三、下周工作规划
+   （结合本周推进情况与后续合理延伸，推导列出 2-3 条切实可行、条理清晰的下周排期规划）
+
+2. 严禁使用官腔大词或空洞口号，突出真实技术细节与交付物。
+3. 直接以 Markdown 格式输出周报内容主体。`;
+
+  if (!finalApiKey || !finalApiModel) {
+    return res.status(400).json({ error: '未配置 API 密钥或模型，请在设置中配置后再试！' });
+  }
+
+  try {
+    const apiBaseUrl = finalApiUrl || 'https://openrouter.ai/api/v1';
+    const apiUrl = apiBaseUrl.endsWith('/') ? apiBaseUrl + 'chat/completions' : apiBaseUrl + '/chat/completions';
+
+    const response = await fetch(apiUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${finalApiKey}`
+      },
+      body: JSON.stringify({
+        model: finalApiModel || DEFAULT_AI_MODEL,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        temperature: 0.7,
+        max_tokens: 2000
+      }),
+      signal: AbortSignal.timeout(180000)
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`上游接口响应错误: ${response.status} - ${errText}`);
+    }
+
+    const apiData = await response.json();
+    const rawReport = apiData.choices?.[0]?.message?.content || '';
+
+    res.json({
+      success: true,
+      report: rawReport.trim()
+    });
+  } catch (err) {
+    console.error('AI 周报提炼失败:', err);
+    res.status(500).json({ error: err.message || 'AI 周报提炼请求失败' });
   }
 });
 

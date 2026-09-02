@@ -11,7 +11,7 @@ export interface LogEntry {
   updatedAt: string;
 }
 
-export type JobType = 'frontend' | 'designer' | 'tester' | 'custom';
+export type JobType = 'backend' | 'frontend' | 'fullstack' | 'tester' | 'designer' | 'pm' | 'devops' | 'custom';
 
 export interface ModelOption {
   id: string;
@@ -45,12 +45,38 @@ export interface AppData {
   settings: Settings;
 }
 
-// 动态计算后端 API 基准地址。开发环境连 localhost:3001，生产部署环境（如京东云 IP 访问）连网页同源 origin
-export const BACKEND_URL = typeof window !== 'undefined'
-  ? (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-    ? 'http://localhost:3001'
-    : window.location.origin)
-  : 'http://localhost:3001';
+// 后端 API 基准地址。统一使用相对路径，开发环境由 Vite proxy 转发，生产环境由同源托管直接响应
+export const BACKEND_URL = '';
+
+export function getAuthToken(): string {
+  return localStorage.getItem('winner_daily_token') || '';
+}
+
+export function setAuthToken(token: string) {
+  if (token) {
+    localStorage.setItem('winner_daily_token', token);
+  } else {
+    localStorage.removeItem('winner_daily_token');
+  }
+}
+
+export function removeAuthToken() {
+  localStorage.removeItem('winner_daily_token');
+}
+
+export function getAuthHeaders(customHeaders: Record<string, string> = {}): Record<string, string> {
+  const user = getCurrentUser();
+  const token = getAuthToken();
+  const headers: Record<string, string> = {
+    'X-User-Name': user,
+    ...customHeaders
+  };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+    headers['X-Auth-Token'] = token;
+  }
+  return headers;
+}
 
 // 默认配置
 const DEFAULT_SETTINGS: Settings = {
@@ -158,12 +184,9 @@ function setLocalStorageData(data: AppData) {
  */
 export async function fetchAllData(): Promise<{ data: AppData; isOffline: boolean }> {
   try {
-    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/data`, { 
-      headers: {
-        'X-User-Name': user
-      },
-      signal: AbortSignal.timeout(1500) 
+      headers: getAuthHeaders(),
+      signal: AbortSignal.timeout(2000) 
     });
     if (res.ok) {
       const data = await res.json();
@@ -192,15 +215,11 @@ export async function saveLog(
   const payload = { date, ...logData };
 
   try {
-    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/logs`, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'X-User-Name': user
-      },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(1500)
+      signal: AbortSignal.timeout(2000)
     });
     if (res.ok) {
       // 同步更新 LocalStorage
@@ -229,13 +248,10 @@ export async function saveLog(
  */
 export async function deleteLog(date: string): Promise<{ success: boolean; isOffline: boolean }> {
   try {
-    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/logs/${date}`, {
       method: 'DELETE',
-      headers: {
-        'X-User-Name': user
-      },
-      signal: AbortSignal.timeout(1500)
+      headers: getAuthHeaders(),
+      signal: AbortSignal.timeout(2000)
     });
     if (res.ok) {
       delete memoryData.logs[date];
@@ -261,15 +277,11 @@ export async function saveSettings(
   settings: Partial<Settings>
 ): Promise<{ success: boolean; isOffline: boolean }> {
   try {
-    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/settings`, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'X-User-Name': user
-      },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(settings),
-      signal: AbortSignal.timeout(1500)
+      signal: AbortSignal.timeout(2000)
     });
     if (res.ok) {
       memoryData.settings = { ...memoryData.settings, ...settings };
@@ -293,26 +305,19 @@ export async function importAllData(data: AppData): Promise<{ success: boolean; 
   setLocalStorageData(data);
 
   try {
-    const user = localStorage.getItem('winner_daily_user') || 'admin';
     await fetch(`${BACKEND_URL}/api/settings`, {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'X-User-Name': user
-      },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(data.settings),
-      signal: AbortSignal.timeout(1500)
+      signal: AbortSignal.timeout(2000)
     });
 
     for (const [date, log] of Object.entries(data.logs)) {
       await fetch(`${BACKEND_URL}/api/logs`, {
         method: 'POST',
-        headers: { 
-          'Content-Type': 'application/json',
-          'X-User-Name': user
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ date, ...log }),
-        signal: AbortSignal.timeout(1000)
+        signal: AbortSignal.timeout(1500)
       });
     }
     return { success: true, isOffline: false };
@@ -327,13 +332,10 @@ export async function importAllData(data: AppData): Promise<{ success: boolean; 
  */
 export async function resetAllData(): Promise<{ success: boolean }> {
   try {
-    const user = localStorage.getItem('winner_daily_user') || 'admin';
     const res = await fetch(`${BACKEND_URL}/api/reset`, {
       method: 'POST',
-      headers: {
-        'X-User-Name': user
-      },
-      signal: AbortSignal.timeout(1500)
+      headers: getAuthHeaders(),
+      signal: AbortSignal.timeout(2000)
     });
     if (res.ok) {
       // 清空本地缓存
@@ -378,4 +380,81 @@ export async function resetAllData(): Promise<{ success: boolean }> {
   };
   setLocalStorageData(memoryData);
   return { success: true };
+}
+
+import { DirectionOption } from '../types/ai';
+import { generateLocalDirectionSuggestions } from './generator';
+
+/**
+ * 获取 AI 启发式工作方向推荐 (5 个切入点卡片)
+ */
+export async function fetchAIDirections(params: {
+  job: string;
+  customJobName?: string;
+  mode: string;
+  recentLogs?: any[];
+  aiApiKey?: string;
+  aiApiUrl?: string;
+  aiModel?: string;
+}): Promise<{ success: boolean; directions: DirectionOption[]; isOffline: boolean }> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/ai/directions`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(params),
+      signal: AbortSignal.timeout(180000)
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data && data.directions && Array.isArray(data.directions) && data.directions.length > 0) {
+        return { success: true, directions: data.directions, isOffline: !!data.isOffline };
+      }
+    }
+  } catch (e) {
+    console.warn('在线拉取方向建议失败，自动无缝降级为本地场景库:', e);
+  }
+
+  // 离线/兜底生成
+  const localDirs = generateLocalDirectionSuggestions(params.job, params.mode, params.customJobName, params.recentLogs);
+  return { success: true, directions: localDirs, isOffline: true };
+}
+
+/**
+ * AI 智能周报提炼与归纳总结
+ */
+export async function generateAIWeeklyReport(params: {
+  job: string;
+  customJobName?: string;
+  startDate: string;
+  endDate: string;
+  weekLogs: Array<{
+    date: string;
+    dayName: string;
+    title: string;
+    hours: number;
+    cooperation: boolean;
+    difficulty: boolean;
+    content: string;
+  }>;
+  aiApiKey?: string;
+  aiApiUrl?: string;
+  aiModel?: string;
+}): Promise<{ success: boolean; report?: string; error?: string }> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/ai/weekly`, {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(params),
+      signal: AbortSignal.timeout(180000)
+    });
+
+    const data = await res.json();
+    if (res.ok && data.success && data.report) {
+      return { success: true, report: data.report };
+    }
+    return { success: false, error: data.error || '生成周报失败' };
+  } catch (err: any) {
+    return { success: false, error: err.message || '网络请求超时' };
+  }
 }

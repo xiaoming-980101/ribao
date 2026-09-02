@@ -1,8 +1,201 @@
 export function getJobDisplayName(job, customJobName = '') {
+  if (job === 'backend') return '后端开发工程师';
+  if (job === 'frontend') return '前端开发工程师';
+  if (job === 'fullstack') return '全栈开发工程师';
   if (job === 'designer') return 'UI/UX 视觉设计师';
   if (job === 'tester') return '测试工程师';
+  if (job === 'pm') return '产品经理';
+  if (job === 'devops') return '运维与SRE工程师';
   if (job === 'custom') return String(customJobName || '').trim() || '自定义岗位';
-  return '前端开发工程师';
+  return '软件开发工程师';
+}
+
+export const JOB_SCENARIO_POOLS = {
+  backend: {
+    task: [
+      '"业务研发：编写核心数据接口与业务状态机转换逻辑，核对入参校验与枚举定义，本地通过单元测试并与前端完成联调"',
+      '"接口开发：实现批量数据查询与聚合统计接口，优化分页查询与索引命中，配合客户端联调接口字段"',
+      '"服务联调：联调用户认证与权限校验中间件，补充 Token 刷新与异常拦截处理，验证边界状态码返回"',
+      '"模块推进：推进订单结算流转及状态持久化开发，梳理事务回滚机制，在本地环境跑通正反向测试用例"',
+      '"数据流转：对接第三方 Webhook 消息通知与异步验签机制，补齐重试队列消费逻辑并自测异常兜底"'
+    ],
+    idle: [
+      { id: 'be_sql', title: '慢查询排查与索引治理', summary: '排查近期慢 SQL 查询日志，针对高频全表扫描补充复合索引并验证执行计划', tag: '数据库调优' },
+      { id: 'be_cache', title: 'Redis 缓存击穿与过期治理', summary: '排查热点缓存过期策略，增加空值兜底与防雪崩随机过期时间', tag: '缓存架构' },
+      { id: 'be_dto', title: '接口数据契约重构与剪裁', summary: '清理废弃 API 路由与无效 DTO 字段，统一错误码与全局异常拦截格式', tag: '接口规范' },
+      { id: 'be_trace', title: '全链路 TraceID 上下文注入', summary: '在服务间调用链注入唯一请求链路跟踪 ID，清理无效冗余 Debug 日志', tag: '监控治理' },
+      { id: 'be_queue', title: '消息队列重试与幂等兜底', summary: '排查异步消息堆积与重试消费机制，增加消费幂等保护与告警阈值', tag: '异步解耦' },
+      { id: 'be_pool', title: '连接池水位调优与超时回收', summary: '排查数据库连接池最大闲置与活跃连接数，优化超时回收时间与监控', tag: '稳定性' }
+    ],
+    study: [
+      { id: 'be_lock', title: '高并发分布式锁续期方案预研', summary: '调研分布式锁极端网络分区下的自动续期与容灾降级，在本地 Demo 验证行为', tag: '并发架构' },
+      { id: 'be_grpc', title: '微服务 gRPC 流式传输调研', summary: '阅读微服务 RPC 通信与 Protobuf 序列化优化文档，对比性能并整理调研笔记', tag: '性能预研' },
+      { id: 'be_deadlock', title: '数据库死锁与事务隔离复盘', summary: '复盘历史并发事务死锁排查案例，梳理行级锁竞争与隔离级别规避清单', tag: '技术复盘' },
+      { id: 'be_otel', title: 'OpenTelemetry 可观测性方案学习', summary: '调研云原生分布式链路追踪标准，整理服务无侵入接入的最佳实践规范', tag: '可观测性' },
+      { id: 'be_mq_stream', title: '流式消息处理与背压机制预研', summary: '研究大数据量下流式管道消费与背压控制，评估高吞吐场景改造可行性', tag: '技术演进' }
+    ]
+  },
+  frontend: {
+    task: [
+      '"业务开发：开发业务页面交互与响应式表单，封装通用业务组件，配合后端联调接口数据并完成本地自测"',
+      '"页面构建：调整页面展示样式，调试看板数据渲染逻辑，处理部分页面显示小问题"',
+      '"流程联调：对接后端新接口，核对字段映射并完善请求异常兜底，自测主流程流转正常"',
+      '"组件开发：把页面里几处重复度比较高的操作弹窗提取成了公用组件，清理部分无用样式"'
+    ],
+    idle: [
+      { id: 'fe_style', title: '页面展示样式调整与渲染逻辑调试', summary: '处理不同分辨率下文字折行与间距错位，调试部分列表与卡片数据联动渲染', tag: '页面调优' },
+      { id: 'fe_form', title: '大表单输入校验与联动状态排查', summary: '排查表单在切换选项时的必填校验遗漏，优化下拉联动与禁用态逻辑', tag: '表单逻辑' },
+      { id: 'fe_api_adapt', title: '新接口数据联调与报错兜底适配', summary: '对接后端新提供的查询接口，核对字段映射并补充弱网与空数据友好提示', tag: '接口联调' },
+      { id: 'fe_bug_fix', title: '提测反馈缺陷排查与交互细节修复', summary: '跟进测试提出的偶发交互问题，修复弹窗重复弹出及数据回显不及时问题', tag: '缺陷修复' },
+      { id: 'fe_list_filter', title: '数据列表多条件筛选与分页联动调试', summary: '调试搜索条件重置后的分页状态，优化多条件组合查询时的参数传递与回显', tag: '业务联动' },
+      { id: 'fe_mobile_compat', title: '移动端兼容走查与打包测试', summary: '在不同机型与移动端环境下走查样式，清理无用控制台输出与测试代码', tag: '多端兼容' },
+      { id: 'fe_refactor_clean', title: '公共组件提取与代码清理', summary: '将多处相似的弹窗和确认操作抽离为公用组件，删除历史冗余样式与无用变量', tag: '代码整理' },
+      { id: 'fe_scroll_debounce', title: '列表下拉加载与数据防抖优化', summary: '针对长列表滚动加载增加节流控制，补充加载中骨架占位与触底无更多提示', tag: '体验优化' }
+    ],
+    study: [
+      { id: 'fe_study_ui', title: '前端组件库最新特性与业务结合梳理', summary: '阅读常用前端 UI 组件库近期更新文档，整理在当前业务中可复用的新交互组件', tag: '组件规范' },
+      { id: 'fe_study_perf', title: '页面首屏加载与静态资源优化技巧整理', summary: '梳理前端常见的路由按需加载与图片懒加载落地方法，结合当前页面做简单自查', tag: '性能整理' },
+      { id: 'fe_study_ts', title: '业务代码 TypeScript 类型规范复习', summary: '整理前端在复杂接口数据转换中的类型声明技巧，沉淀常用泛型工具方法笔记', tag: '代码规范' },
+      { id: 'fe_study_test', title: '前端常见边界场景与自测方法整理', summary: '整理表单输入极端字符、网络超时与无权限等常见边界测试要点，建立自测检查单', tag: '质量自查' }
+    ]
+  },
+  fullstack: {
+    task: [
+      '"全栈推进：完成前后端数据通道与管理后台全链路开发，联调权限校验与动态表单，自测核心流转闭环"',
+      '"功能闭环：设计数据表结构并实现对应 RESTful 接口，同步完成前端可视化表格展示与批量操作功能"'
+    ],
+    idle: [
+      { id: 'fs_contract', title: '前后端端到端 TypeScript 契约统一', summary: '使用共享类型包统一前端 API 调用与后端接口 DTO 定义，消除类型不一致隐患', tag: '契约工程' },
+      { id: 'fs_docker', title: '全栈 Docker 镜像分层与体积缩减', summary: '重构多阶段构建 Dockerfile，引入国内镜像源并裁剪冗余依赖层', tag: '容器运维' },
+      { id: 'fs_auth', title: '端到端鉴权与安全标头加固', summary: '加固 CSRF/CORS 策略与安全响应头配置，梳理 Refresh Token 自动续签机制', tag: '安全防护' },
+      { id: 'fs_db_query', title: '全栈链路查询耗时排查与缓存', summary: '排查前端高频接口在后端的 SQL 执行效率，为高频只读数据添加多级缓存', tag: '全链路优化' },
+      { id: 'fs_clean', title: '全栈废弃模块与冗余依赖清理', summary: '梳理前后端未引用文件与过期 API 路由，精简代码仓库体积并执行回归验证', tag: '代码重构' }
+    ],
+    study: [
+      { id: 'fs_ssr', title: '现代 SSR/SSG 渲染架构性能对比', summary: '调研服务端渲染与边缘计算缓存策略，搭建 Benchmark 原型评估首屏提速效果', tag: '渲染架构' },
+      { id: 'fs_grpc_web', title: 'gRPC-Web 与 HTTP/3 传输协议调研', summary: '研究现代二进制传输协议在前后端直连场景的应用，评估低延迟网络表现', tag: '网络协议' },
+      { id: 'fs_edge_db', title: '分布式边缘数据库与读写分离预研', summary: '调研边缘多区域数据同步与连接池复用方案，沉淀技术调研文档', tag: '分布式存储' }
+    ]
+  },
+  designer: {
+    task: [
+      '"设计开发：细化核心页面高保真视觉稿、核对产品线框流程、整理切图交付并走查开发还原效果"',
+      '"视觉产出：设计新功能模块的交互组件态与异常空状态，输出规范化矢量图标与跨分辨率设计交付物"'
+    ],
+    idle: [
+      { id: 'ui_token', title: '设计系统全局色彩与字阶 Token 规范', summary: '统一设计系统中的色彩语义化层级与排版比例标尺，整理公共组件库源文件', tag: '设计系统' },
+      { id: 'ui_clean', title: '历史项目 Figma 冗余图层整理归档', summary: '清理过期项目源文件，规范图层命名、AutoLayout 约束与切图标注导出', tag: '资产管理' },
+      { id: 'ui_empty', title: '多场景通用异常缺省页与插画设计', summary: '补充网络断开、权限受限、数据为空等极端边界状态下的高质感空态插图', tag: '体验微调' },
+      { id: 'ui_motion', title: '核心微交互动效曲线与参数标定', summary: '规范弹窗出现、页面转场与按钮点击的物理阻尼参数，与前端同步实现标准', tag: '动效规范' },
+      { id: 'ui_audit', title: '线上已发布页面视觉走查与还原度核对', summary: '走查生产环境各分辨率下的字号、间距与圆角还原细节，整理视觉优化清单', tag: '还原度走查' }
+    ],
+    study: [
+      { id: 'ui_spatial', title: '空间计算与液态玻璃视觉趋势调研', summary: '拆解先锋 UI 趋势中的多层光学模糊与镜面高光细节，制作团队视觉灵感 Moodboard', tag: '前沿趋势' },
+      { id: 'ui_accessibility', title: '无障碍色彩对比度与可读性标准', summary: '学习 WCAG 2.1 颜色对比度要求，评估现有产品在高对比度下的视觉可识别度', tag: '包容性设计' },
+      { id: 'ui_design_tokens', title: 'Design Tokens 跨端同步工作流', summary: '研究 Figma Token 插件与前端 CSS Variables 自动化同步机制，提高协作效率', tag: '工程化协作' }
+    ]
+  },
+  tester: {
+    task: [
+      '"测试验证：执行提测功能用例、复测历史缺陷、补充异常场景和复现步骤，并整理回归测试结果"',
+      '"质量把控：围绕本期迭代核心流程执行端到端功能测试，验证接口边界值与弱网环境下的异常容错表现"'
+    ],
+    idle: [
+      { id: 'qa_auto_scripts', title: '自动化测试脚本稳定性调优', summary: '优化端到端测试用例中的等待与元素定位策略，降低网络抖动导致的误报率', tag: '自动化测试' },
+      { id: 'qa_data_clean', title: '测试环境脏数据与账号池清理', summary: '重置并维护测试数据库初始桩数据，规范各角色权限测试账号与测试用例关联', tag: '环境治理' },
+      { id: 'qa_regression', title: '核心业务主流程回归测试用例库', summary: '梳理并更新高频主流程冒烟测试清单，归纳易漏测边界条件并沉淀检查卡片', tag: '用例体系' },
+      { id: 'qa_bug_audit', title: '历史缺陷复盘与漏测归因分析', summary: '统计分析上期版本线上问题与提测 Bug 分布，梳理质量薄弱模块及防范策略', tag: '质量复盘' },
+      { id: 'qa_mock_server', title: '接口 Mock 异常桩与弱网规则配置', summary: '配置 500、超时、极端乱码返回的 Mock 场景，验证前端容错及重试提示表现', tag: '异常模拟' }
+    ],
+    study: [
+      { id: 'qa_k6_perf', title: '基于 K6 / JMeter 性能压测指标分析', summary: '学习并发压测线程模型、TPS 吞吐量与 P99 响应延迟分析，整理压测方案模板', tag: '性能测试' },
+      { id: 'qa_playwright', title: 'Playwright 现代化 UI 自动化测试', summary: '学习 Playwright 录制回放与多端并行执行特性，对比现有框架并搭建 POC 验证', tag: '工具升级' },
+      { id: 'qa_security', title: 'Web 安全渗透与常见漏洞测试要点', summary: '学习 SQL 注入、XSS 与越权访问排查要点，整理常规业务安全测试检查项', tag: '安全测试' }
+    ]
+  },
+  pm: {
+    task: [
+      '"需求推进：梳理下阶段产品业务流程与功能清单，产出原型线框图，与研发、设计团队组织需求评审与答疑"',
+      '"项目跟进：跟进当前迭代各研发模块提测进度，协调跨部门资源排期，走查已提测功能的交互逻辑一致性"'
+    ],
+    idle: [
+      { id: 'pm_funnel', title: '核心转化漏斗与用户埋点数据复盘', summary: '分析近期功能上线后的留存、点击转化与流失环节，产出核心数据分析简报', tag: '数据复盘' },
+      { id: 'pm_feedback', title: '用户与客服反馈问题分类归档', summary: '收集业务端、客服与用户社群的高频问题，整理需求池并评估下期优先级', tag: '需求池管理' },
+      { id: 'pm_prd_spec', title: '历史功能 PRD 交互文档与规则补全', summary: '更新线上已发布模块的正式业务规则说明书，沉淀业务术语词典与状态流转图', tag: '文档治理' },
+      { id: 'pm_roadmap', title: '季度迭代路线图与里程碑拆解', summary: '结合团队研发资源与业务指标目标，梳理各业务阶段里程碑与关键交付节点', tag: '规划排期' },
+      { id: 'pm_competitor', title: '竞品同类模块功能细节深度走查', summary: '体验对标竞品最新版本的交互链路与引导策略，提炼可参考的体验亮点与差异', tag: '竞品分析' }
+    ],
+    study: [
+      { id: 'pm_ai_product', title: 'AI 原生应用产品交互设计模式调研', summary: '研究 LLM 对话交互与 Generative UI 最佳实践，分析如何降低用户输入门槛', tag: 'AI 产品' },
+      { id: 'pm_growth', title: 'PLG 产品驱动增长模型与策略', summary: '学习以产品体验驱动自传播与转化的设计框架，梳理自服务引导流程优化点', tag: '增长策略' },
+      { id: 'pm_metrics', title: '北极星指标体系与指标下钻拆解', summary: '学习现代数字化产品核心指标监控体系，设计科学的 A/B 测试对照评估方案', tag: '数据体系' }
+    ]
+  },
+  devops: {
+    task: [
+      '"运维推进：更新持续集成 CI/CD 构建流水线，优化自动化打包分发脚本，核对生产环境配置变更清单"',
+      '"集群部署：配置服务容器化扩缩容策略与健康检查探针，联调日志收集与监控告警通道，验证高可用切换"'
+    ],
+    idle: [
+      { id: 'ops_disk_clean', title: '服务器基础资源与磁盘空间巡检清理', summary: '排查各节点磁盘使用率与大日志占用，清理悬空无用 Docker 镜像与系统缓存', tag: '系统巡检' },
+      { id: 'ops_alert_rule', title: 'Prometheus 告警阈值与降噪治理', summary: '调优高频抖动告警规则，合并重复告警通知，优化 Grafana 核心大盘展示', tag: '监控优化' },
+      { id: 'ops_security', title: '服务器安全补丁与 SSH/防火墙加固', summary: '排查已知系统安全漏洞，加固 SSH 端口访问策略与非必要外网端口安全组', tag: '安全加固' },
+      { id: 'ops_backup_drill', title: '数据库冷备份与容灾恢复有效性演练', summary: '抽检数据库定时备份文件完整性，在测试节点验证异地恢复与数据校验流程', tag: '容灾演练' },
+      { id: 'ops_ci_speed', title: 'CI/CD 流水线构建缓存与依赖加速', summary: '优化 Docker 镜像层缓存与国内 NPM/Maven 代理源，缩短自动化构建耗时', tag: '效能提升' }
+    ],
+    study: [
+      { id: 'ops_k8s_mesh', title: 'Service Mesh 流量治理与金丝雀发布', summary: '学习 Istio 服务网格微服务流量调度策略与零停机灰度发布方案，整理实操笔记', tag: '云原生' },
+      { id: 'ops_iac', title: 'Terraform 基础设施即代码 (IaC) 实践', summary: '研究使用声明式代码编排云服务器与网络资源，评估团队基础设施自动化改造', tag: '自动化运维' },
+      { id: 'ops_ebpf', title: 'eBPF 现代系统级可观测性与网络诊断', summary: '学习 Linux 内核级探针在网络排障、性能分析与安全防御中的应用场景与案例', tag: '底层技术' }
+    ]
+  },
+  generic: {
+    task: [
+      '"工作推进：按排期推进今日重点事项处理，核对关键业务细节，整理协作过程记录，确认后续跟进节点"'
+    ],
+    idle: [
+      { id: 'gen_doc', title: '近期业务文档整理与知识沉淀', summary: '归纳整理近期项目文档与常用操作指引，规范团队公共知识库目录结构', tag: '资料整理' },
+      { id: 'gen_clean', title: '待办事项核对与历史流程归档', summary: '梳理已完成事项的后续跟进状态，清理过期待办并核对遗漏协作信息', tag: '流程归档' },
+      { id: 'gen_efficiency', title: '个人工作流自动化与效率工具调优', summary: '优化日常高频操作的快捷脚本与模板配置，精简重复性事务流转成本', tag: '效能优化' },
+      { id: 'gen_sync', title: '跨部门协作进展跟进与答疑', summary: '跟进上下游协作事项的处理进展，解答日常咨询并同步关键进度节点', tag: '业务协同' },
+      { id: 'gen_review', title: '月度重点事项执行情况复盘自查', summary: '对照月度目标回顾阶段性交付质量，总结实施阻碍并整理改善措施', tag: '工作复盘' }
+    ],
+    study: [
+      { id: 'gen_skill', title: '岗位专业技能与行业前沿资料学习', summary: '阅读行业前沿分析报告与专业最佳实践指南，提炼可落地的思维方法并做笔记', tag: '技能提升' },
+      { id: 'gen_process', title: '敏捷项目协同与标准化流程学习', summary: '学习高效团队在跨部门协作与质量把控方面的标准作业流程，沉淀参考建议', tag: '方法论' },
+      { id: 'gen_tool', title: 'AI 辅助生产力工具在日常场景的实操', summary: '探索利用 AI 工具快速提取信息、整理结构化文档与数据校验的实操技巧', tag: '效率探索' }
+    ]
+  }
+};
+
+function getRandomItem(arr) {
+  if (!arr || arr.length === 0) return '';
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
+export function getJobKey(job, customJobName = '') {
+  if (job && job !== 'custom' && JOB_SCENARIO_POOLS[job]) {
+    return job;
+  }
+  if (job === 'custom') {
+    const custom = (customJobName || '').toLowerCase();
+    if (custom.includes('前端') || custom.includes('web') || custom.includes('h5') || custom.includes('小程序')) {
+      return 'frontend';
+    } else if (custom.includes('后端') || custom.includes('java') || custom.includes('go') || custom.includes('python') || custom.includes('php') || custom.includes('c++') || custom.includes('c#') || custom.includes('node') || custom.includes('服务端')) {
+      return 'backend';
+    } else if (custom.includes('全栈')) {
+      return 'fullstack';
+    } else if (custom.includes('设计') || custom.includes('ui') || custom.includes('ux') || custom.includes('视觉')) {
+      return 'designer';
+    } else if (custom.includes('测试') || custom.includes('qa')) {
+      return 'tester';
+    } else if (custom.includes('产品') || custom.includes('pm')) {
+      return 'pm';
+    } else if (custom.includes('运维') || custom.includes('sre') || custom.includes('devops')) {
+      return 'devops';
+    }
+  }
+  return 'generic';
 }
 
 export function buildTaskSeed(userInput, job, mode, customJobName = '') {
@@ -13,64 +206,177 @@ export function buildTaskSeed(userInput, job, mode, customJobName = '') {
     return `【${explicitInput}】`;
   }
 
-  const jobName = getJobDisplayName(job, customJobName);
-  const presets = job === 'designer'
-    ? {
-        task: '“设计开发：细化核心页面高保真视觉稿、核对产品线框流程、整理切图交付并走查开发还原效果”',
-        idle: '“日常维护：整理历史项目高保真视觉源文件，清理本地 Figma 冗余图层和过期切图，核对组件间距、字号和颜色标注，并把常用素材重新归档”',
-        study: '“设计预研：调研移动端 UI/UX 交互趋势，收集优秀商业设计案例，拆解几个常见页面的信息层级和动效细节，整理个人视觉提案思路”'
-      }
-    : (job === 'tester'
-      ? {
-          task: '“测试验证：执行提测功能用例、复测历史缺陷、补充异常场景和复现步骤，并整理回归测试结果”',
-          idle: '“日常维护：整理回归测试清单，清理测试环境脏数据，复查历史缺陷状态，并抽查几个核心流程的稳定性”',
-          study: '“测试预研：学习测试用例设计和自动化脚本稳定性优化，整理边界值、异常分支和兼容性检查点”'
-        }
-      : (job === 'custom'
-        ? {
-            task: `“${jobName}：推进当天事项处理，核对关键细节，整理过程记录，并确认后续需要跟进的问题”`,
-            idle: `“${jobName}日常维护：整理近期资料 and 记录，检查已完成事项的后续状态，补齐遗漏信息并归档常用材料”`,
-            study: `“${jobName}学习复盘：阅读岗位相关方法资料，复盘近期事项处理过程，整理可复用的检查清单和改进点”`
-          }
-        : {
-        task: '“业务开发：编写日常模块页面与交互逻辑、配合后端完成数据联调、本地浏览器回归走查”',
-        idle: '“日常维护：检查历史页面在不同宽度下的样式兼容和交互细节，清理控制台警告、无用日志和本地配置项，顺手梳理公共组件入参，并跑一遍常用页面回归自测”',
-        study: '“技术预研：阅读前端工程化规范指南，在本地环境搭建测试 Demo，验证构建配置和组件写法差异，整理框架新特性笔记”'
-      }));
-
-  return presets[currentMode];
+  const jobKey = getJobKey(job, customJobName);
+  const pool = JOB_SCENARIO_POOLS[jobKey]?.[currentMode] || JOB_SCENARIO_POOLS.generic[currentMode];
+  
+  if (Array.isArray(pool) && pool.length > 0) {
+    const item = getRandomItem(pool);
+    if (typeof item === 'string') return item;
+    if (item && item.title) return `"${item.title}：${item.summary}"`;
+  }
+  return `"推进当天${getJobDisplayName(job, customJobName)}相关事项，核对细节并完成自测自查"`;
 }
 
-export function parseGeneratedLog(rawText) {
-  const cleaned = rawText
-    .replace(/^```(?:\w+)?\s*/i, '')
-    .replace(/```$/i, '')
-    .trim();
+export function buildDirectionsPrompt({
+  job = 'frontend',
+  customJobName = '',
+  mode = 'idle',
+  recentLogs = []
+}) {
+  const jobName = getJobDisplayName(job, customJobName);
 
-  let title = '日常开发维护';
-  let content = cleaned;
-
-  const titleMatch = cleaned.match(/(?:^|\n)\s*标题\s*[:：]\s*(.+?)(?=\n|$)/);
-  if (titleMatch && titleMatch[1]) {
-    title = titleMatch[1].trim().replace(/^["“]|["”]$/g, '');
+  let historyContext = '';
+  if (Array.isArray(recentLogs) && recentLogs.length > 0) {
+    const historySnippets = recentLogs
+      .slice(0, 10)
+      .map((log, i) => `  - 历史${i + 1}: ${log.title ? '[' + log.title + '] ' : ''}${(log.content || '').slice(0, 80)}`)
+      .join('\n');
+    historyContext = `\n近期已做过的事项（请避免推荐完全一样的方向）：\n${historySnippets}\n`;
   }
 
-  const contentMatch = cleaned.match(/(?:^|\n)\s*内容\s*[:：]\s*([\s\S]+)/);
-  if (contentMatch && contentMatch[1]) {
-    content = contentMatch[1].trim();
-  } else if (titleMatch) {
-    content = cleaned
-      .replace(/(?:^|\n)\s*标题\s*[:：]\s*.+?(?=\n|$)/, '')
+  const systemPrompt = `你是一名在公司一线工作的真实 ${jobName}。你熟知互联网企业里接地气、真实的日常研发、业务调优、联调测试与缺陷修复工作，绝不堆砌空洞虚假的技术大词。`;
+
+  const userPrompt = `作为一名 ${jobName}，今天需要整理 5 个【真实、接地气、像普通员工每天实际在做】的工作切入点。${historyContext}\n\n要求：\n1. 5 个方向必须非常务实、写实（例如：页面样式微调与兼容走查、表单数据校验联动、接口联调与异常兜底、提测缺陷排查修复、列表筛选分页联动、组件提取与代码清理等），绝不写假大空的八股文大词（禁止出现"深度赋能"、"全链路闭环"、"原子化重构"等空话）。\n2. 每个方向包含：\n   - 简明精准的标题（8 到 14 个字，像真实任务名）\n   - 具体的实施要点摘要（20 到 35 个字，包含具体动作）\n   - 一个精炼的标签 tag（2 到 4 个字，如"页面调优"、"接口联调"、"缺陷修复"）\n3. 严格按 JSON 数组格式直接输出，不要包含任何多余文字：\n[\n  { "id": "dir_1", "title": "...", "summary": "...", "tag": "..." },\n  { "id": "dir_2", "title": "...", "summary": "...", "tag": "..." },\n  { "id": "dir_3", "title": "...", "summary": "...", "tag": "..." },\n  { "id": "dir_4", "title": "...", "summary": "...", "tag": "..." },\n  { "id": "dir_5", "title": "...", "summary": "...", "tag": "..." }\n]`;
+
+  return { systemPrompt, userPrompt };
+}
+
+export function parseDirections(rawText, job, mode, customJobName = '') {
+  try {
+    const cleaned = rawText
+      .replace(/^[\s\S]*?\[/, '[')
+      .replace(/\][\s\S]*$/, ']')
       .trim();
+
+    const parsed = JSON.parse(cleaned);
+    if (Array.isArray(parsed) && parsed.length >= 3) {
+      return parsed.slice(0, 5).map((item, idx) => ({
+        id: item.id || `dir_${idx + 1}`,
+        title: String(item.title || `工作方向 ${idx + 1}`).replace(/^[0-9]+[、.\s]*/, '').trim(),
+        summary: String(item.summary || '').trim(),
+        tag: String(item.tag || '日常维护').trim()
+      }));
+    }
+  } catch (e) {
+    console.warn('解析方向建议 JSON 失败，回退到内置智能种子库:', e);
   }
 
-  content = content
-    .replace(/(?:^|\n)\s*内容\s*[:：]\s*/g, '\n')
+  const jobKey = getJobKey(job, customJobName);
+  const currentMode = mode === 'study' ? 'study' : 'idle';
+  const pool = JOB_SCENARIO_POOLS[jobKey]?.[currentMode] || JOB_SCENARIO_POOLS.generic[currentMode];
+  
+  if (Array.isArray(pool) && pool.length > 0) {
+    const shuffled = [...pool].sort(() => Math.random() - 0.5);
+    return shuffled.slice(0, 5).map((item, idx) => {
+      if (typeof item === 'object') return { ...item, id: `local_dir_${idx + 1}` };
+      return {
+        id: `local_dir_${idx + 1}`,
+        title: `工作方向 ${idx + 1}`,
+        summary: item,
+        tag: currentMode === 'study' ? '技术预研' : '日常维护'
+      };
+    });
+  }
+
+  return [];
+}
+
+export function buildPrompts({
+  userInput,
+  job = 'frontend',
+  customJobName = '',
+  tone = 'professional',
+  mode = 'task',
+  currentTitle = '',
+  currentContent = '',
+  recentLogs = []
+}) {
+  const jobName = getJobDisplayName(job, customJobName);
+  const isDoubaoPromptMode = mode === 'doubao_prompt';
+  const isTweakMode = mode === 'tweak';
+
+  const promptTaskMode = isDoubaoPromptMode ? 'idle' : mode;
+  const tasksText = (isTweakMode || isDoubaoPromptMode)
+    ? ''
+    : buildTaskSeed(userInput, job, promptTaskMode, customJobName);
+  const doubaoTasksText = buildTaskSeed(userInput, job, userInput && String(userInput).trim() ? 'task' : 'idle', customJobName);
+
+  let antiRepetitionNotice = '';
+  if (Array.isArray(recentLogs) && recentLogs.length > 0) {
+    const historySnippets = recentLogs
+      .slice(0, 8)
+      .map((log, i) => `  - 历史${i + 1}: ${log.title ? '[' + log.title + '] ' : ''}${(log.content || '').slice(0, 60)}`)
+      .join('\n');
+    antiRepetitionNotice = `\n近期历史记录（避免重复）：\n${historySnippets}\n`;
+  }
+
+  const systemPrompt = `你是一名严谨高效的资深 ${jobName}。你擅长把研发工作提炼为简明、客观、干练的工作事项记录，坚决杜绝日记式流水账（严禁出现"今天我花了时间"、"刚刚发现"、"挺省事的"等主观口语），字句精简有力。`;
+
+  let userPrompt = '';
+
+  if (isDoubaoPromptMode) {
+    userPrompt = `请生成一段简明提示词模板，帮我把研发任务提炼成客观精练的工作记录。\n事项输入：${doubaoTasksText}\n要求：不要分序号，写成简练干练的一两句话（约 35 到 60 字），包含核心动作与自测状态，非日记体。\n仅输出提示词内容，无代码块。`;
+  } else if (isTweakMode) {
+    userPrompt = `请对下面这段工作事项做精简优化，去除冗余废话和日记口吻，提炼为客观干练的事项记录：\n原标题：${String(currentTitle || '').trim() || '未填写'}\n原内容：${String(currentContent || '').trim()}\n\n要求：\n1. 语言客观干练、简明扼要，严禁写成日记流水账（严禁出现"今天我..."、"发现..."、"挺好"等口语）。\n2. 严禁分点（不带 1. 2. 3. 序号），写成连贯精炼的一两句话（控制在 35 到 65 个字左右）。\n3. 包含"核心处理动作 + 处理要点 + 自测/联调正常"。\n\n请严格按以下格式输出（不要有 Markdown 代码块）：\n标题：[8到14字事项名称]\n内容：[简明扼要的一两句话，35到65字左右]`;
+  } else {
+    userPrompt = `请把以下工作任务，提炼为一份简明、干练、客观的标准工作事项记录：\n\n今日输入：${tasksText}\n\n核心规范：\n1. 【简明干练，拒绝日记体】：严禁写成"今天我做了什么"、"先做A再做B"等日记流水账！请使用客观干练的职场书面语（例如："配合后端联调订单结算接口，修复优惠券计算显示逻辑，自测下单流程正常。"）。\n2. 【长度适中，禁止分点】：不要分点列出（不带 1. 2. 序号），写成连贯精简的一两句话，字数严格控制在 40 到 80 个中文字左右。\n3. 【结构清晰】：客观表述"主要处理事项 + 关键细节/修复点 + 验证自测正常"。\n4. 【标题提炼】：提炼精准简洁的事项名称（8 到 14 个字）。\n5. 【必须保留具体名词】：用户输入中出现的模块名、接口名、功能名、技术名词等具体词汇，必须原样出现在输出中，严禁将用户写的具体词汇（如"用户中台登录接口"、"Redis缓存击穿"）泛化成"相关接口"、"缓存问题"等模糊表述，输出必须体现用户输入的核心具体词汇。\n${antiRepetitionNotice}\n请严格按以下格式输出（严禁包含代码块标记或额外说明）：\n标题：[精准事项标题]\n内容：[简明客观的一两句话，40到80字]`;
+  }
+
+  return { systemPrompt, userPrompt };
+};
+
+export function parseGeneratedLog(rawText, defaultTitle = '', defaultContent = '') {
+  if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
+    return {
+      title: defaultTitle || '日常开发与维护推进',
+      content: defaultContent || '推进前端页面交互与逻辑优化，排查局部细节并完成自测。'
+    };
+  }
+
+  let text = rawText
+    .replace(/```[a-zA-Z]*\n?/g, '')
+    .replace(/```/g, '')
     .trim();
 
-  if (title.length > 30) {
-    title = title.slice(0, 30);
+  let title = '';
+  let extractedContent = '';
+
+  const titleMatch = text.match(/(?:^|\n)\s*(?:\*\*|__)?(?:标题|事项名称|主题|Title)(?:\*\*|__)?\s*[:：]\s*(.+?)(?=\n|$)/i);
+  if (titleMatch && titleMatch[1]) {
+    title = titleMatch[1].trim().replace(/^["'*#\s\[\]]+|["'*#\s\[\]]+$/g, '');
   }
 
-  return { title, content };
+  const contentMatch = text.match(/(?:^|\n)\s*(?:\*\*|__)?(?:内容|工作内容|事项内容|流水|Content)(?:\*\*|__)?\s*[:：]\s*([\s\S]+)/i);
+  if (contentMatch && contentMatch[1]) {
+    extractedContent = contentMatch[1].trim();
+  } else if (titleMatch) {
+    const titleIndex = text.indexOf(titleMatch[0]);
+    const afterTitle = text.slice(titleIndex + titleMatch[0].length).trim();
+    if (afterTitle && afterTitle.length > 5) {
+      extractedContent = afterTitle;
+    }
+  }
+
+  if (!extractedContent && !titleMatch) {
+    extractedContent = text;
+  }
+
+  extractedContent = extractedContent
+    .replace(/^(?:标题|事项名称|主题)[:：].*$/gm, '')
+    .replace(/^[0-9]+[、.\s]+/gm, '')
+    .replace(/\n+/g, '')
+    .replace(/^[""]|[""]$/g, '')
+    .trim();
+
+  if (!extractedContent || extractedContent.length < 5) {
+    extractedContent = defaultContent || '推进前端页面交互与逻辑优化，排查局部细节并完成自测。';
+  }
+
+  if (!title) {
+    title = defaultTitle || extractedContent.slice(0, 14) || '前端开发与优化';
+  }
+
+  title = title.replace(/^["'*#\s\[\]]+|["'*#\s\[\]]+$/g, '').trim();
+
+  return { title, content: extractedContent };
 }

@@ -1,5 +1,6 @@
 import fs from 'fs';
-import { DB_FILE } from './config.js';
+import path from 'path';
+import { DB_FILE, BACKUP_DIR } from './config.js';
 import { hashPassword } from './utils/password.js';
 
 export function createDefaultSettings(overrides = {}) {
@@ -53,7 +54,7 @@ export function initDB() {
         }
       };
       fs.writeFileSync(DB_FILE, JSON.stringify(upgradedData, null, 2), 'utf8');
-      console.log('🟢 默认账号注入/迁移成功 (密码: admin123)！');
+      console.log('默认账号注入/迁移成功 (密码: admin123)！');
     }
   } catch (e) {
     console.error('初始化数据库失败，重置为默认账号结构:', e);
@@ -72,20 +73,51 @@ export function readDB() {
   }
 }
 
+export function backupDBSnapshot() {
+  try {
+    if (!fs.existsSync(DB_FILE)) return;
+    if (!fs.existsSync(BACKUP_DIR)) {
+      fs.mkdirSync(BACKUP_DIR, { recursive: true });
+    }
+
+    const todayStr = new Date().toISOString().split('T')[0];
+    const targetFile = path.join(BACKUP_DIR, `db-snapshot-${todayStr}.json`);
+
+    // 如果当天快照不存在，或者已有快照体积较小，则复制创建备份
+    if (!fs.existsSync(targetFile)) {
+      fs.copyFileSync(DB_FILE, targetFile);
+      console.log(`[db backup] 已自动生成今日物理数据库安全快照: db-snapshot-${todayStr}.json`);
+    }
+
+    // 自动清理超过 7 天的历史快照
+    const files = fs.readdirSync(BACKUP_DIR).filter(f => f.startsWith('db-snapshot-') && f.endsWith('.json'));
+    if (files.length > 7) {
+      files.sort(); // 按文件名日期升序
+      while (files.length > 7) {
+        const toDelete = files.shift();
+        try {
+          fs.unlinkSync(path.join(BACKUP_DIR, toDelete));
+          console.log(`[db backup] 已自动清理历史过期快照: ${toDelete}`);
+        } catch (_) {}
+      }
+    }
+  } catch (err) {
+    console.warn('[db backup] 创建快照备份失败 (非致命):', err.message);
+  }
+}
+
 // 写入数据库文件，包含 Docker 卷挂载 EXDEV 跨设备重命名安全降级
 export function writeDB(data) {
+  backupDBSnapshot();
   const tmpFile = DB_FILE + '.tmp';
   try {
     fs.writeFileSync(tmpFile, JSON.stringify(data, null, 2), 'utf8');
     try {
       fs.renameSync(tmpFile, DB_FILE);
     } catch (renameError) {
-      if (renameError.code === 'EXDEV') {
-        fs.copyFileSync(tmpFile, DB_FILE);
-        fs.unlinkSync(tmpFile);
-      } else {
-        throw renameError;
-      }
+      // 无论是跨设备 (EXDEV) 还是 Docker 单文件挂载导致的设备忙/锁定 (EBUSY) 等错误，均降级为复制并删除临时文件
+      fs.copyFileSync(tmpFile, DB_FILE);
+      fs.unlinkSync(tmpFile);
     }
     return true;
   } catch (error) {

@@ -23,6 +23,7 @@ app.use(express.static(DIST_PATH));
 app.use('/api', authRoutes);
 app.use('/api', dataRoutes);
 app.use('/api', aiRoutes);
+app.use('/api/ai', aiRoutes);
 
 // 前端路由通配托管 (支持 React 路由 SPA 刷新不报 404)
 app.get('*', (req, res) => {
@@ -48,8 +49,12 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('[unhandledRejection] 捕获到未处理的 Promise 拒绝:', reason);
 });
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Backend Database Server is running on http://localhost:${PORT}`);
 });
+// 支持大模型多上游轮询，设置 3 分钟 (180,000ms) 长连接超时
+server.setTimeout(180000);
+server.keepAliveTimeout = 180000;
+server.headersTimeout = 185000;
 
 export default app;
