@@ -1,7 +1,7 @@
 {
   "users": {
     "admin": {
-      "password": "$2b$10$nYXe1y7VePmQEo48qpy3geQ.W14lDnAiF7lpMeose3QAunio58LJK",
+      "password": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
       "logs": {
         "2026-07-02": {
           "title": "杭州网金7月实物1元购冗余代码清理与组件整理",
@@ -29,9 +29,7 @@
         "customJobName": ""
       },
       "trash": {},
-      "reports": {
-        "2026-W36": "### 一、本周重点交付\n1. 完成慢 SQL 调优与索引治理\n2. 增加回收站与历史快照\n\n### 二、下周规划\n1. 继续提升离线同步性能"
-      }
+      "reports": {}
     }
   }
 }

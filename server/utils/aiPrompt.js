@@ -242,23 +242,25 @@ export function buildDirectionsPrompt({
 }
 
 export function parseDirections(rawText, job, mode, customJobName = '') {
-  try {
-    const cleaned = rawText
-      .replace(/^[\s\S]*?\[/, '[')
-      .replace(/\][\s\S]*$/, ']')
-      .trim();
+  if (rawText && typeof rawText === 'string' && rawText.trim()) {
+    try {
+      const cleaned = rawText
+        .replace(/^[\s\S]*?\[/, '[')
+        .replace(/\][\s\S]*$/, ']')
+        .trim();
 
-    const parsed = JSON.parse(cleaned);
-    if (Array.isArray(parsed) && parsed.length >= 3) {
-      return parsed.slice(0, 5).map((item, idx) => ({
-        id: item.id || `dir_${idx + 1}`,
-        title: String(item.title || `工作方向 ${idx + 1}`).replace(/^[0-9]+[、.\s]*/, '').trim(),
-        summary: String(item.summary || '').trim(),
-        tag: String(item.tag || '日常维护').trim()
-      }));
+      const parsed = JSON.parse(cleaned);
+      if (Array.isArray(parsed) && parsed.length >= 3) {
+        return parsed.slice(0, 5).map((item, idx) => ({
+          id: item.id || `dir_${idx + 1}`,
+          title: String(item.title || `工作方向 ${idx + 1}`).replace(/^[0-9]+[、.\s]*/, '').trim(),
+          summary: String(item.summary || '').trim(),
+          tag: String(item.tag || '日常维护').trim()
+        }));
+      }
+    } catch (e) {
+      console.warn('解析方向建议 JSON 失败，回退到内置智能种子库:', e.message || e);
     }
-  } catch (e) {
-    console.warn('解析方向建议 JSON 失败，回退到内置智能种子库:', e);
   }
 
   const jobKey = getJobKey(job, customJobName);
