@@ -11,8 +11,8 @@ import {
   Lightbulb,
   RefreshCw,
   CheckCircle2,
-  Sliders,
-  Compass
+  Compass,
+  Layers
 } from 'lucide-react';
 import { getJobDisplayName } from '../../utils/generator';
 import { DirectionOption } from '../../types/ai';
@@ -305,7 +305,7 @@ export function InputPanel({
             {mode === 'ai_prompt' ? '输入事项要点草稿 (用于生成格式化 Markdown 规范模板)' : '输入今日核心事项要点 (用逗号或换行分隔)'}
           </label>
           <textarea
-            placeholder={mode === 'ai_prompt' ? "例如：完成用户鉴权中间件编写，排查慢查询日志并补齐索引" : "例如：排查慢 SQL 接口耗时，联调权限拦截中间件"}
+            placeholder={mode === 'ai_prompt' ? "例如：完成用户鉴权中间件编写，排查慢查询日志并补齐索引" : "例如：支付中台、CRM系统；或具体事项：排查慢 SQL 接口耗时，联调权限拦截中间件"}
             value={userInput}
             onChange={(e) => setUserInput(e.target.value)}
             style={{
@@ -318,21 +318,81 @@ export function InputPanel({
         </div>
       ) : (
         /* ── 无任务 / 技术预研模式：今日工作方向灵感罗盘 ── */
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', flex: 1 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', flex: 1 }}>
+          {/* 1. 核心重点：输入所属平台/系统名称，激发专属 5 选 1 建议 */}
+          {setCustomDirectionNote && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <Layers size={14} color="var(--accent-color)" />
+                  <span>负责系统 / 平台名称</span>
+                </div>
+                <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: '400' }}>
+                  输入后按回车即刻发散专属事项
+                </span>
+              </label>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input
+                  type="text"
+                  value={customDirectionNote}
+                  onChange={(e) => setCustomDirectionNote(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && fetchDirections) {
+                      e.preventDefault();
+                      fetchDirections(true, customDirectionNote);
+                    }
+                  }}
+                  placeholder="例如：支付中台、CRM会员后台、移动端小程序、数据监控大盘"
+                  style={{
+                    flex: 1,
+                    fontSize: '13px',
+                    padding: '9px 12px',
+                    borderRadius: '10px'
+                  }}
+                />
+                {fetchDirections && (
+                  <button
+                    onClick={() => fetchDirections(true, customDirectionNote)}
+                    disabled={isFetchingDirections}
+                    className="clickable"
+                    title="围绕当前平台名称重新发散 5 个切入点"
+                    style={{
+                      padding: '0 14px',
+                      borderRadius: '10px',
+                      background: 'var(--glass-surface-subtle)',
+                      border: '1px solid var(--glass-border)',
+                      color: 'var(--text-primary)',
+                      fontSize: '12px',
+                      fontWeight: '700',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      cursor: isFetchingDirections ? 'not-allowed' : 'pointer',
+                      whiteSpace: 'nowrap'
+                    }}
+                  >
+                    <Sparkles size={13} color="var(--accent-color)" className={isFetchingDirections ? 'animate-spin' : ''} />
+                    <span>{isFetchingDirections ? '发散中...' : '智能发散'}</span>
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Compass size={16} color="var(--accent-color)" />
+              <Compass size={15} color="var(--accent-color)" />
               <span style={{ fontSize: '13px', fontWeight: '800', color: 'var(--text-primary)' }}>
-                日常维护事项推荐库 (Routine Tasks Catalog)
+                {customDirectionNote.trim() ? `【${customDirectionNote.trim()}】专属事项推荐 (5选1)` : '日常维护事项推荐库 (5选1)'}
               </span>
             </div>
             {fetchDirections && (
               <button
-                onClick={() => fetchDirections(true)}
+                onClick={() => fetchDirections(true, customDirectionNote)}
                 disabled={isFetchingDirections}
                 className="clickable"
                 style={{
-                  padding: '5px 10px',
+                  padding: '4px 9px',
                   borderRadius: '8px',
                   background: 'var(--glass-surface-subtle)',
                   border: '1px solid var(--glass-border)',
@@ -345,14 +405,16 @@ export function InputPanel({
                   cursor: isFetchingDirections ? 'not-allowed' : 'pointer'
                 }}
               >
-                <RefreshCw size={12} className={isFetchingDirections ? 'animate-spin' : ''} />
-                <span>{isFetchingDirections ? '分析中...' : '换一批事项'}</span>
+                <RefreshCw size={11} className={isFetchingDirections ? 'animate-spin' : ''} />
+                <span>换一批</span>
               </button>
             )}
           </div>
 
-          <div style={{ fontSize: '12px', color: 'var(--text-muted)', lineHeight: '1.5' }}>
-            系统已结合 <span style={{ color: 'var(--accent-color)', fontWeight: '700' }}>{getJobDisplayName(job, customJobName)}</span> 岗位特征与近期归档记录排查，请在下方选择最契合您今天状态的维护切入点：
+          <div style={{ fontSize: '11px', color: 'var(--text-muted)', lineHeight: '1.4' }}>
+            {customDirectionNote.trim()
+              ? `已结合【${customDirectionNote.trim()}】与 ${getJobDisplayName(job, customJobName)} 岗位特征自动衍生，请勾选最契合的切入点：`
+              : `系统已结合 ${getJobDisplayName(job, customJobName)} 岗位特征排查，请在下方直接勾选今天推进的切入点：`}
           </div>
 
           {/* 5 个 Bento 风格悬浮液态玻璃方向卡片 */}
@@ -365,14 +427,14 @@ export function InputPanel({
                   onClick={() => selectDirection && selectDirection(dir.id)}
                   className="clickable"
                   style={{
-                    padding: '12px 14px',
+                    padding: '11px 13px',
                     borderRadius: '12px',
                     background: isSelected ? 'rgba(99, 102, 241, 0.12)' : 'var(--glass-surface-subtle)',
                     border: isSelected ? '1.5px solid var(--accent-color)' : '1px solid var(--glass-border)',
                     boxShadow: isSelected ? '0 0 16px var(--accent-glow)' : 'none',
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '5px',
+                    gap: '4px',
                     cursor: 'pointer',
                     transition: 'all 0.2s ease',
                     position: 'relative'
@@ -384,7 +446,7 @@ export function InputPanel({
                         style={{
                           fontSize: '10px',
                           fontWeight: '800',
-                          padding: '2px 7px',
+                          padding: '2px 6px',
                           borderRadius: '6px',
                           background: isSelected ? 'var(--accent-gradient)' : 'rgba(255,255,255,0.08)',
                           color: isSelected ? '#ffffff' : 'var(--text-secondary)'
@@ -398,34 +460,13 @@ export function InputPanel({
                     </div>
                     {isSelected && <CheckCircle2 size={16} color="var(--accent-color)" />}
                   </div>
-                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.5', paddingLeft: '2px' }}>
+                  <div style={{ fontSize: '11px', color: 'var(--text-secondary)', lineHeight: '1.4', paddingLeft: '2px' }}>
                     {dir.summary}
                   </div>
                 </div>
               );
             })}
           </div>
-
-          {/* 细节微调输入框 */}
-          {setCustomDirectionNote && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '2px' }}>
-              <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                <Sliders size={12} />
-                <span>（可选）对选定事项追加少量细节备注：</span>
-              </label>
-              <input
-                type="text"
-                value={customDirectionNote}
-                onChange={(e) => setCustomDirectionNote(e.target.value)}
-                placeholder="例如：主要针对慢接口 / 针对用户登录表 / 包含单元测试边界"
-                style={{
-                  fontSize: '12px',
-                  padding: '8px 12px',
-                  borderRadius: '10px'
-                }}
-              />
-            </div>
-          )}
         </div>
       )}
 

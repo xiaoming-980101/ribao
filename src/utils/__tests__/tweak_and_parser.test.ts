@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-// @ts-ignore
+// @ts-expect-error server/.js module outside tsconfig include scope, resolved by vitest
 import { parseGeneratedLog } from '../../../server/utils/aiPrompt.js';
 
 describe('parseGeneratedLog & Tweak Format Robustness Tests', () => {

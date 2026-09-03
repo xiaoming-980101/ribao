@@ -21,7 +21,7 @@ import { PreviewPanel } from './daily/PreviewPanel';
 import { AIModelControls } from './daily/AIModelControls';
 
 import { copyTextToClipboard } from '../utils/clipboard';
-import { saveDraft, loadDraft, clearDraft, LogDraft } from '../utils/draft';
+
 import {
   checkIsRecommended,
   formatSelectedModel,

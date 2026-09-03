@@ -176,9 +176,11 @@ export function useAIGeneration({
   }, [aiSettings.aiApiUrl]);
 
   // ── 拉取工作方向建议 ──
-  const fetchDirections = useCallback(async (_forceOnline: boolean = false) => {
+  const fetchDirections = useCallback(async (_forceOnline: boolean = false, targetPlatform?: string) => {
     if (mode !== 'idle' && mode !== 'study') return;
     setIsFetchingDirections(true);
+
+    const platformToUse = targetPlatform !== undefined ? targetPlatform : customDirectionNote;
 
     const historyLogs = Object.entries(appData.logs || {})
       .sort(([a], [b]) => b.localeCompare(a))
@@ -194,6 +196,7 @@ export function useAIGeneration({
         job,
         customJobName,
         mode,
+        platform: platformToUse,
         recentLogs: historyLogs,
         aiApiKey: aiSettings.aiApiKey,
         aiApiUrl: aiSettings.aiApiUrl,
@@ -206,20 +209,20 @@ export function useAIGeneration({
       }
     } catch (e) {
       console.warn('获取方向建议异常，使用本地默认:', e);
-      const local = generateLocalDirectionSuggestions(job, mode, customJobName, historyLogs);
+      const local = generateLocalDirectionSuggestions(job, mode, customJobName, historyLogs, platformToUse);
       setDirections(local);
       if (local.length > 0) setSelectedDirectionId(local[0].id);
     } finally {
       setIsFetchingDirections(false);
     }
-  }, [mode, job, customJobName, appData.logs, aiSettings.aiApiKey, aiSettings.aiApiUrl, aiSettings.aiModel]);
+  }, [mode, job, customJobName, customDirectionNote, appData.logs, aiSettings.aiApiKey, aiSettings.aiApiUrl, aiSettings.aiModel]);
 
   // 当处于无任务/技术预研模式，且岗位或模式变化时，自动拉取 5 个切入点方向
   useEffect(() => {
     if (mode === 'idle' || mode === 'study') {
       fetchDirections();
     }
-  }, [mode, job, customJobName, fetchDirections]);
+  }, [mode, job, customJobName]);
 
   const selectedDirection = directions.find((d) => d.id === selectedDirectionId) || null;
 
@@ -335,8 +338,9 @@ export function useAIGeneration({
     let effectiveInput = userInput;
     if (mode === 'idle' || mode === 'study') {
       if (selectedDirection) {
-        const noteStr = customDirectionNote.trim() ? `（细节补充：${customDirectionNote.trim()}）` : '';
-        effectiveInput = `${selectedDirection.title}：${selectedDirection.summary}${noteStr}`;
+        const platNote = customDirectionNote.trim();
+        const noteStr = platNote ? `【负责系统/平台：${platNote}】` : '';
+        effectiveInput = `${noteStr}${selectedDirection.title}：${selectedDirection.summary}`;
       }
     }
 
@@ -413,10 +417,19 @@ export function useAIGeneration({
     // 离线模式 / 未开启 AI
     if (!aiSettings.aiEnabled || !aiSettings.aiApiKey) {
       if (mode === 'idle' || mode === 'study') {
-        const directionTitle = selectedDirection ? selectedDirection.title : '';
+        const plat = customDirectionNote.trim();
+        let directionTitle = selectedDirection ? selectedDirection.title : '';
+        if (plat && directionTitle && !directionTitle.includes(plat)) {
+          directionTitle = `${plat}${directionTitle}`;
+        }
         const result = generateRandomFrontendDaily('', mode === 'study', job, customJobName);
         if (directionTitle) {
-          result.title = directionTitle;
+          result.title = directionTitle.length > 20 ? directionTitle.slice(0, 19) : directionTitle;
+        }
+        if (selectedDirection) {
+          const platPrefix = plat ? `围绕${plat}` : '推进';
+          const cleanSummary = selectedDirection.summary.replace(/^(针对.+?，)/, '');
+          result.content = `${platPrefix}开展${selectedDirection.title}，${cleanSummary}，本地测试与验证正常。`;
         }
         setTitle(result.title);
         setHours(result.hours);

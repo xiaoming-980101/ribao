@@ -68,7 +68,9 @@ function load() {
     queue = [];
     try {
       localStorage.removeItem(QUEUE_STORAGE_KEY);
-    } catch (_) {}
+    } catch (_err) {
+      // ignore clear error
+    }
   }
 }
 

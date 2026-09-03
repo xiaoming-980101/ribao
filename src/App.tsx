@@ -224,7 +224,9 @@ export default function App() {
       try {
         const chan = (window as any).__winnerDailySyncChannel;
         if (chan) chan.close();
-      } catch (e) {}
+      } catch (_e) {
+        // ignore close error
+      }
     };
   }, []);
 

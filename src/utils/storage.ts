@@ -1,4 +1,4 @@
-import { enqueue, flushOfflineQueue, OfflineOp } from './offlineQueue';
+import { enqueue, flushOfflineQueue } from './offlineQueue';
 
 export interface LogEntry {
   title: string;          // 日志名称
@@ -324,7 +324,8 @@ export async function deleteLog(date: string): Promise<{ success: boolean; isOff
 export async function restoreLog(date: string): Promise<{ success: boolean; isOffline: boolean }> {
   const restoreLocally = (): boolean => {
     if (memoryData.trash && memoryData.trash[date]) {
-      const { deletedAt: _d, ...cleanLog } = memoryData.trash[date];
+      const cleanLog = { ...memoryData.trash[date] };
+      delete cleanLog.deletedAt;
       memoryData.logs[date] = cleanLog;
       delete memoryData.trash[date];
       setLocalStorageData(memoryData);
@@ -581,6 +582,7 @@ export async function fetchAIDirections(params: {
   job: string;
   customJobName?: string;
   mode: string;
+  platform?: string;
   recentLogs?: any[];
   aiApiKey?: string;
   aiApiUrl?: string;
@@ -605,7 +607,7 @@ export async function fetchAIDirections(params: {
   }
 
   // 离线/兜底生成
-  const localDirs = generateLocalDirectionSuggestions(params.job, params.mode, params.customJobName, params.recentLogs);
+  const localDirs = generateLocalDirectionSuggestions(params.job, params.mode, params.customJobName, params.recentLogs, params.platform);
   return { success: true, directions: localDirs, isOffline: true };
 }
 

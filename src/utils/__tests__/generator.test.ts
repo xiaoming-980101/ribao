@@ -7,6 +7,8 @@ import {
   generateRandomDaily,
   generateLocalDirectionSuggestions
 } from '../generator';
+// @ts-expect-error server/.js module outside tsconfig include scope, resolved by vitest
+import { buildDirectionsPrompt } from '../../../server/utils/aiPrompt.js';
 
 describe('generator utils', () => {
   describe('calculateSimilarity', () => {
@@ -110,6 +112,26 @@ describe('generator utils', () => {
           });
         });
       });
+    });
+
+    it('近期日志与库内方向高度相似时，应剔除重复项并仍补齐 5 个', () => {
+      const recentLogs = [{ title: '页面样式与多分辨率适配' }];
+      const suggestions = generateLocalDirectionSuggestions('frontend', 'idle', '', recentLogs);
+      expect(suggestions.length).toBe(5);
+      expect(suggestions.every(item => item.title !== '页面样式与多分辨率适配')).toBe(true);
+      expect(new Set(suggestions.map(s => s.id)).size).toBe(5);
+    });
+  });
+
+  describe('buildDirectionsPrompt', () => {
+    it('study 模式应写入"架构预研/技术学习"标签', () => {
+      const { userPrompt } = buildDirectionsPrompt({ job: 'frontend', mode: 'study', recentLogs: [] });
+      expect(userPrompt).toContain('架构预研/技术学习');
+    });
+
+    it('idle 模式应写入"系统维护/日常优化"标签', () => {
+      const { userPrompt } = buildDirectionsPrompt({ job: 'backend', mode: 'idle', recentLogs: [] });
+      expect(userPrompt).toContain('系统维护/日常优化');
     });
   });
 });

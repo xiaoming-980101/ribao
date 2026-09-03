@@ -23,9 +23,11 @@ describe('Excel 工作日志导入器测试', () => {
     const samplePath = 'D:/下载/任务列表导出_20260831151506.xlsx';
     let nodeFs: any = null;
     try {
-      // @ts-ignore
+      // @ts-expect-error fs is node module
       nodeFs = await import('fs');
-    } catch (_) {}
+    } catch (_err) {
+      // ignore import error
+    }
 
     if (!nodeFs || !nodeFs.existsSync(samplePath)) {
       console.warn('测试环境未找到外部真实 Excel 文件，跳过外部路径读取');

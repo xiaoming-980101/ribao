@@ -25,6 +25,7 @@ router.post('/directions', async (req, res) => {
     job,
     customJobName,
     mode,
+    platform,
     recentLogs,
     aiApiKey,
     aiApiUrl,
@@ -53,7 +54,7 @@ router.post('/directions', async (req, res) => {
 
   // 如果未配置 API Key，直接使用高质量内置方向引擎返回
   if (!finalApiKey || !finalApiModel) {
-    const directions = parseDirections('', job, mode, customJobName);
+    const directions = parseDirections('', job, mode, customJobName, platform);
     return res.json({ success: true, directions, isOffline: true });
   }
 
@@ -61,6 +62,7 @@ router.post('/directions', async (req, res) => {
     job,
     customJobName,
     mode,
+    platform,
     recentLogs: historyLogs
   });
 
@@ -88,19 +90,19 @@ router.post('/directions', async (req, res) => {
 
     if (!response.ok) {
       console.warn(`AI directions upstream returned ${response.status}, fallback to local scenario pool`);
-      const directions = parseDirections('', job, mode, customJobName);
+      const directions = parseDirections('', job, mode, customJobName, platform);
       return res.json({ success: true, directions, isOffline: true });
     }
 
     const apiData = await response.json();
     const dirMsg = apiData.choices?.[0]?.message;
     const contentVal = (dirMsg?.content || dirMsg?.reasoning || '');
-    const directions = parseDirections(contentVal, job, mode, customJobName);
+    const directions = parseDirections(contentVal, job, mode, customJobName, platform);
 
     res.json({ success: true, directions, isOffline: false });
   } catch (error) {
     console.warn('AI directions request failed, fallback to local scenario pool:', error);
-    const directions = parseDirections('', job, mode, customJobName);
+    const directions = parseDirections('', job, mode, customJobName, platform);
     res.json({ success: true, directions, isOffline: true });
   }
 });
