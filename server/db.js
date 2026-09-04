@@ -20,6 +20,8 @@ export function createDefaultSettings(overrides = {}) {
 }
 
 let isInitialized = false;
+/** 已完成快照与过期清理的日期（YYYY-MM-DD）。同日内后续写入直接跳过目录扫描 */
+let snapshotDoneForDate = '';
 
 export function initDB() {
   if (isInitialized && fs.existsSync(DB_FILE)) {
@@ -117,17 +119,23 @@ export function readDB() {
   }
 }
 
+/**
+ * 每日一次的物理快照与过期清理。
+ * 快照按天粒度生成，因此同一天内的后续写入无需再做
+ * existsSync/readdirSync 目录扫描——writeDB 是同步阻塞调用，
+ * 每次写都扫目录会把单次写入成本放大一个数量级。
+ */
 export function backupDBSnapshot() {
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (snapshotDoneForDate === todayStr) return;
+
   try {
     if (!fs.existsSync(DB_FILE)) return;
     if (!fs.existsSync(BACKUP_DIR)) {
       fs.mkdirSync(BACKUP_DIR, { recursive: true });
     }
 
-    const todayStr = new Date().toISOString().split('T')[0];
     const targetFile = path.join(BACKUP_DIR, `db-snapshot-${todayStr}.json`);
-
-    // 如果当天快照不存在，或者已有快照体积较小，则复制创建备份
     if (!fs.existsSync(targetFile)) {
       fs.copyFileSync(DB_FILE, targetFile);
       console.log(`[db backup] 已自动生成今日物理数据库安全快照: db-snapshot-${todayStr}.json`);
@@ -142,9 +150,11 @@ export function backupDBSnapshot() {
         try {
           fs.unlinkSync(path.join(BACKUP_DIR, toDelete));
           console.log(`[db backup] 已自动清理历史过期快照: ${toDelete}`);
-        } catch (_) {}
+        } catch (e) { /* 单个快照删除失败不影响主流程 */ }
       }
     }
+
+    snapshotDoneForDate = todayStr;
   } catch (err) {
     console.warn('[db backup] 创建快照备份失败 (非致命):', err.message);
   }

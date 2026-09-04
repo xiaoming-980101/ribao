@@ -21,6 +21,7 @@ import { PreviewPanel } from './daily/PreviewPanel';
 import { AIModelControls } from './daily/AIModelControls';
 
 import { copyTextToClipboard } from '../utils/clipboard';
+import { saveDraft, loadDraft, clearDraft } from '../utils/draft';
 
 import {
   checkIsRecommended,
@@ -60,6 +61,11 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   const [draftNotice, setDraftNotice] = useState<string | null>(null);
   const draftTimerRef = useRef<number | null>(null);
   const editingDateRef = useRef<string>('');
+  // 最新表单值镜像 ref：供「切换日期时把上一日期的最新编辑落盘为草稿」读取。
+  // 不能在 effect 依赖里直接引入 title/content 等（否则编辑已保存日志时会被 effect 反复覆盖正在输入的内容）
+  // 用 ref 每次渲染同步，既避免陈旧闭包，也不触发额外 effect 重跑。
+  const formRef = useRef({ title: "", hours: 8, cooperation: false, difficulty: false, content: "" });
+  formRef.current = { title, hours, cooperation, difficulty, content };
 
   // 岗位和语气
   const [job, setJob] = useState<string>('frontend');
@@ -67,7 +73,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
   const [tone, setTone] = useState<string>('professional');
 
   // 查重 hook
-  const { maxSimilarity, similarDate } = useSimilarityCheck({
+  const { maxSimilarity, similarDate, isChecking: isCheckingSimilarity, checkNow } = useSimilarityCheck({
     content,
     selectedDate,
     logs: appData.logs || {},
@@ -187,15 +193,16 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       const prevDate = editingDateRef.current;
       if (prevDate && prevDate !== selectedDate) {
         const prevSaved = appData.logs[prevDate];
+        const form = formRef.current;
         const prevSameAsSaved =
           prevSaved &&
-          title === prevSaved.title &&
-          content === prevSaved.content &&
-          hours === prevSaved.hours &&
-          cooperation === prevSaved.cooperation &&
-          difficulty === prevSaved.difficulty;
-        if (!prevSameAsSaved && (title.trim() || content.trim())) {
-          saveDraft(prevDate, { title, hours, cooperation, difficulty, content });
+          form.title === prevSaved.title &&
+          form.content === prevSaved.content &&
+          form.hours === prevSaved.hours &&
+          form.cooperation === prevSaved.cooperation &&
+          form.difficulty === prevSaved.difficulty;
+        if (!prevSameAsSaved && (form.title.trim() || form.content.trim())) {
+          saveDraft(prevDate, { title: form.title, hours: form.hours, cooperation: form.cooperation, difficulty: form.difficulty, content: form.content });
         }
       }
 
@@ -446,9 +453,13 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
       return;
     }
 
-    if (maxSimilarity >= appData.settings.similarityThreshold) {
+    // 查重是防抖执行的，保存前必须同步重算一次；
+    // 否则在防抖窗口内直接点保存会用到上一次输入的陈旧相似度，绕过绩效红线告警
+    const freshSimilarity = checkNow(content.trim());
+
+    if (freshSimilarity.maxSimilarity >= appData.settings.similarityThreshold) {
       const confirmSave = window.confirm(
-        `考勤高危警告：\n\n当前日志内容与 [${similarDate}] 的历史日志相似度高达 ${maxSimilarity}%！\n这已超过了您在配置中设定的高危报警线 (${appData.settings.similarityThreshold}%)。\n\n如果直接提交，极易被公司考勤抽查判定为“敷衍、抄袭或重复填报”而导致扣绩效分。\n\n您确定要强行保存吗？`
+        `考勤高危警告：\n\n当前日志内容与 [${freshSimilarity.similarDate}] 的历史日志相似度高达 ${freshSimilarity.maxSimilarity}%！\n这已超过了您在配置中设定的高危报警线 (${appData.settings.similarityThreshold}%)。\n\n如果直接提交，极易被公司考勤抽查判定为“敷衍、抄袭或重复填报”而导致扣绩效分。\n\n您确定要强行保存吗？`
       );
       if (!confirmSave) {
         return;
@@ -479,12 +490,17 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
         if (next.length > 8) next.shift();
         return next;
       });
-      showToast('日报已成功保存并物理落盘至 db.json！', 'success');
+      showToast(
+        res.isOffline
+          ? '后端不可达，日报已暂存本地，联网后将自动同步落盘。'
+          : '日报已成功保存并物理落盘至 db.json！',
+        res.isOffline ? 'info' : 'success'
+      );
       onSaveSuccess();
       setTimeout(() => setSaveStatus('idle'), 2000);
     } else {
       setSaveStatus('error');
-      showToast('保存失败，请确认后端 API 服务已正常开启！', 'error');
+      showToast(`保存失败：${res.error || '服务端拒绝了本次写入'}`, 'error');
       setTimeout(() => setSaveStatus('idle'), 2000);
     }
   };
@@ -632,6 +648,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
           handleSave={handleSave}
           maxSimilarity={maxSimilarity}
           similarDate={similarDate}
+          isCheckingSimilarity={isCheckingSimilarity}
           simLevel={simLevel}
           aiSettings={aiSettings}
           compareMode={compareMode}

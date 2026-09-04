@@ -56,14 +56,17 @@ export default function Sidebar({
       <div>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '30px', paddingLeft: '4px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-            <div style={{
-              background: 'var(--accent-gradient)',
-              width: '42px', height: '42px',
-              borderRadius: '12px',
-              display: 'flex', alignItems: 'center', justifyContent: 'center',
-              boxShadow: '0 8px 20px var(--accent-glow), inset 0 1px 1px rgba(255,255,255,0.4)',
-              flexShrink: 0
-            }}>
+            <div
+              className="pulse-glow-badge"
+              style={{
+                background: 'var(--accent-gradient)',
+                width: '42px', height: '42px',
+                borderRadius: '12px',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                boxShadow: '0 8px 20px var(--accent-glow), inset 0 1px 1px rgba(255,255,255,0.4)',
+                flexShrink: 0
+              }}
+            >
               <PenSquare size={22} color="#fff" />
             </div>
             <div>
@@ -113,7 +116,8 @@ export default function Sidebar({
                   fontSize: '14px',
                   boxShadow: isActive ? '0 8px 24px var(--accent-glow), inset 0 1px 1px rgba(255,255,255,0.3)' : 'none',
                   border: isActive ? '1px solid rgba(255,255,255,0.25)' : '1px solid transparent',
-                  position: 'relative'
+                  position: 'relative',
+                  transition: 'all 0.25s cubic-bezier(0.16, 1, 0.3, 1)'
                 }}
               >
                 <Icon size={18} color={isActive ? '#ffffff' : 'currentColor'} />

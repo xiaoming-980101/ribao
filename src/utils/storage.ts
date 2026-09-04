@@ -1,4 +1,4 @@
-import { enqueue, flushOfflineQueue } from './offlineQueue';
+import { enqueue, flushOfflineQueue, OfflineOp } from './offlineQueue';
 
 export interface LogEntry {
   title: string;          // 日志名称
@@ -97,8 +97,81 @@ export function getAuthHeaders(customHeaders: Record<string, string> = {}): Reco
   return headers;
 }
 
+/** 请求默认超时（ms）。远端部署下 2s 过于激进，会把慢响应误判成离线 */
+const REQUEST_TIMEOUT_MS = 8000;
+/** 离线队列回放时的单条请求超时（ms） */
+const SYNC_TIMEOUT_MS = 15000;
+
+/** 登录态失效事件名，App 层监听后强制重新登录 */
+export const AUTH_EXPIRED_EVENT = 'winner-daily-auth-expired';
+
+/**
+ * 请求三态结果。区分「网络不可达」与「服务端明确拒绝」是关键：
+ * 前者可以安全降级入队等待回放，后者重试无意义，必须向用户暴露。
+ */
+export type ApiOutcome =
+  | { status: 'ok'; res: Response }
+  | { status: 'offline'; reason: string }
+  | { status: 'rejected'; httpStatus: number; reason: string };
+
+function notifyAuthExpired(reason: string) {
+  removeAuthToken();
+  try {
+    window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT, { detail: { reason } }));
+  } catch (e) { /* 非浏览器环境忽略 */ }
+}
+
+/** 从错误响应中提取可读原因，HTML 响应（如 SPA 通配兜底）不作为文案 */
+async function readErrorMessage(res: Response): Promise<string> {
+  try {
+    const text = await res.text();
+    try {
+      const data = JSON.parse(text);
+      if (data && typeof data.error === 'string' && data.error.trim()) return data.error.trim();
+    } catch (e) { /* 非 JSON 响应，回退原文 */ }
+    if (text.trim() && !text.trimStart().startsWith('<')) return text.trim().slice(0, 200);
+  } catch (e) { /* 响应体读取失败 */ }
+  if (res.status === 401 || res.status === 403) return '登录凭证已失效，请重新登录。';
+  return `服务端返回 HTTP ${res.status}`;
+}
+
+/**
+ * 统一后端请求封装，返回三态结果：
+ *  - ok       2xx 成功
+ *  - offline  网络不可达 / 超时 / 网关不可用（502/503/504）→ 可安全入队回放
+ *  - rejected 服务端明确拒绝（401/403/其他 4xx/5xx）→ 禁止入队，必须上报用户
+ */
+async function apiRequest(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs: number = REQUEST_TIMEOUT_MS
+): Promise<ApiOutcome> {
+  let res: Response;
+  try {
+    res = await fetch(`${BACKEND_URL}${path}`, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  } catch (e: any) {
+    const reason = e && e.name === 'TimeoutError'
+      ? `请求超时（已等待 ${timeoutMs}ms）`
+      : '后端服务不可达';
+    return { status: 'offline', reason };
+  }
+
+  if (res.ok) return { status: 'ok', res };
+
+  // 网关/服务暂时不可用等同于后端离线，入队回放是安全的
+  if (res.status === 502 || res.status === 503 || res.status === 504) {
+    return { status: 'offline', reason: `后端网关暂不可用（HTTP ${res.status}）` };
+  }
+
+  const reason = await readErrorMessage(res);
+  if (res.status === 401 || res.status === 403) {
+    notifyAuthExpired(reason);
+  }
+  return { status: 'rejected', httpStatus: res.status, reason };
+}
+
 // 默认配置
-const DEFAULT_SETTINGS: Settings = {
+export const DEFAULT_SETTINGS: Settings = {
   job: 'frontend',
   customJobName: '',
   tone: 'professional',
@@ -218,26 +291,27 @@ function setLocalStorageData(data: AppData) {
 /**
  * 获取全部数据（日志+配置）
  */
-export async function fetchAllData(): Promise<{ data: AppData; isOffline: boolean }> {
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/data`, { 
-      headers: getAuthHeaders(),
-      signal: AbortSignal.timeout(2000) 
-    });
-    if (res.ok) {
-      const data = await res.json();
-      memoryData = data;
-      // 同步写入本地 LocalStorage 备份
-      setLocalStorageData(data);
-      return { data, isOffline: false };
-    }
-  } catch (e) {
-    console.warn('后端服务未启动或连接超时，正在降级为 LocalStorage 离线模式');
+export async function fetchAllData(): Promise<{ data: AppData; isOffline: boolean; error?: string }> {
+  const outcome = await apiRequest('/api/data', { headers: getAuthHeaders() });
+
+  if (outcome.status === 'ok') {
+    const data = await outcome.res.json();
+    memoryData = data;
+    // 同步写入本地 LocalStorage 备份
+    setLocalStorageData(data);
+    return { data, isOffline: false };
   }
 
-  // 降级模式：读取 LocalStorage
+  // 读取失败时仍回落本地缓存（比白屏可用），但把服务端拒绝的原因透出给调用方
   const localData = getLocalStorageData();
   memoryData = localData;
+
+  if (outcome.status === 'rejected') {
+    console.warn('[storage] 后端拒绝了数据读取请求:', outcome.httpStatus, outcome.reason);
+    return { data: localData, isOffline: true, error: outcome.reason };
+  }
+
+  console.warn('[storage] 后端服务不可达，降级为 LocalStorage 离线模式:', outcome.reason);
   return { data: localData, isOffline: true };
 }
 
@@ -247,43 +321,43 @@ export async function fetchAllData(): Promise<{ data: AppData; isOffline: boolea
 export async function saveLog(
   date: string,
   logData: Omit<LogEntry, 'updatedAt'>
-): Promise<{ success: boolean; isOffline: boolean }> {
+): Promise<{ success: boolean; isOffline: boolean; error?: string }> {
   const payload = { date, ...logData };
 
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/logs`, {
-      method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(2000)
-    });
-    if (res.ok) {
-      // 同步更新 LocalStorage
-      memoryData.logs[date] = {
-        ...logData,
-        updatedAt: new Date().toISOString()
-      };
-      setLocalStorageData(memoryData);
-      return { success: true, isOffline: false };
-    }
-  } catch (e) {
-    console.warn('保存日志至后端失败，正在写入本地 LocalStorage 离线存储');
+  const writeLocal = () => {
+    memoryData.logs[date] = {
+      ...logData,
+      updatedAt: new Date().toISOString()
+    };
+    setLocalStorageData(memoryData);
+  };
+
+  const outcome = await apiRequest('/api/logs', {
+    method: 'POST',
+    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(payload)
+  });
+
+  if (outcome.status === 'ok') {
+    writeLocal();
+    return { success: true, isOffline: false };
   }
 
-  // 降级模式：写入 LocalStorage 并入队待同步
-  memoryData.logs[date] = {
-    ...logData,
-    updatedAt: new Date().toISOString()
-  };
-  setLocalStorageData(memoryData);
-  enqueue({ kind: 'save_log', date, payload: { date, ...logData } });
+  // 服务端明确拒绝：重试无意义，不得入队，直接把失败原因交还调用方
+  if (outcome.status === 'rejected') {
+    return { success: false, isOffline: false, error: outcome.reason };
+  }
+
+  // 仅「网络不可达」才降级为本地存储并入队等待回放
+  writeLocal();
+  enqueue({ kind: 'save_log', date, payload });
   return { success: true, isOffline: true };
 }
 
 /**
  * 删除日志（软删除：移入回收站 trash，可在设置/回收站恢复）
  */
-export async function deleteLog(date: string): Promise<{ success: boolean; isOffline: boolean }> {
+export async function deleteLog(date: string): Promise<{ success: boolean; isOffline: boolean; error?: string }> {
   // 本地同步先将旧日志快照移入回收站
   const moveToLocalTrash = () => {
     if (memoryData.logs[date]) {
@@ -299,18 +373,19 @@ export async function deleteLog(date: string): Promise<{ success: boolean; isOff
     return false;
   };
 
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/logs/${date}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-      signal: AbortSignal.timeout(2000)
-    });
-    if (res.ok) {
-      moveToLocalTrash();
-      return { success: true, isOffline: false };
-    }
-  } catch (e) {
-    console.warn('从后端删除日志失败，正在本地 LocalStorage 离线删除');
+  const outcome = await apiRequest(`/api/logs/${date}`, {
+    method: 'DELETE',
+    headers: getAuthHeaders()
+  });
+
+  if (outcome.status === 'ok') {
+    moveToLocalTrash();
+    return { success: true, isOffline: false };
+  }
+
+  // 服务端拒绝时保持本地不动，避免本地与服务器状态分叉
+  if (outcome.status === 'rejected') {
+    return { success: false, isOffline: false, error: outcome.reason };
   }
 
   moveToLocalTrash();
@@ -321,7 +396,7 @@ export async function deleteLog(date: string): Promise<{ success: boolean; isOff
 /**
  * 从回收站恢复指定日期的日志
  */
-export async function restoreLog(date: string): Promise<{ success: boolean; isOffline: boolean }> {
+export async function restoreLog(date: string): Promise<{ success: boolean; isOffline: boolean; error?: string }> {
   const restoreLocally = (): boolean => {
     if (memoryData.trash && memoryData.trash[date]) {
       const cleanLog = { ...memoryData.trash[date] };
@@ -334,18 +409,18 @@ export async function restoreLog(date: string): Promise<{ success: boolean; isOf
     return false;
   };
 
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/logs/${date}/restore`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      signal: AbortSignal.timeout(2000)
-    });
-    if (res.ok) {
-      restoreLocally();
-      return { success: true, isOffline: false };
-    }
-  } catch (e) {
-    console.warn('在线恢复日志失败，降级本地恢复');
+  const outcome = await apiRequest(`/api/logs/${date}/restore`, {
+    method: 'POST',
+    headers: getAuthHeaders()
+  });
+
+  if (outcome.status === 'ok') {
+    restoreLocally();
+    return { success: true, isOffline: false };
+  }
+
+  if (outcome.status === 'rejected') {
+    return { success: false, isOffline: false, error: outcome.reason };
   }
 
   const ok = restoreLocally();
@@ -356,24 +431,27 @@ export async function restoreLog(date: string): Promise<{ success: boolean; isOf
 /**
  * 清空回收站（不可恢复，彻底物理删除）
  */
-export async function clearTrash(): Promise<{ success: boolean; isOffline: boolean }> {
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/trash/clear`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      signal: AbortSignal.timeout(2000)
-    });
-    if (res.ok) {
-      memoryData.trash = {};
-      setLocalStorageData(memoryData);
-      return { success: true, isOffline: false };
-    }
-  } catch (e) {
-    console.warn('在线清空回收站失败，降级本地清空');
+export async function clearTrash(): Promise<{ success: boolean; isOffline: boolean; error?: string }> {
+  const outcome = await apiRequest('/api/trash/clear', {
+    method: 'POST',
+    headers: getAuthHeaders()
+  });
+
+  const clearLocal = () => {
+    memoryData.trash = {};
+    setLocalStorageData(memoryData);
+  };
+
+  if (outcome.status === 'ok') {
+    clearLocal();
+    return { success: true, isOffline: false };
   }
 
-  memoryData.trash = {};
-  setLocalStorageData(memoryData);
+  if (outcome.status === 'rejected') {
+    return { success: false, isOffline: false, error: outcome.reason };
+  }
+
+  clearLocal();
   enqueue({ kind: 'clear_trash' });
   return { success: true, isOffline: true };
 }
@@ -383,25 +461,28 @@ export async function clearTrash(): Promise<{ success: boolean; isOffline: boole
  */
 export async function saveSettings(
   settings: Partial<Settings>
-): Promise<{ success: boolean; isOffline: boolean }> {
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/settings`, {
-      method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(settings),
-      signal: AbortSignal.timeout(2000)
-    });
-    if (res.ok) {
-      memoryData.settings = { ...memoryData.settings, ...settings };
-      setLocalStorageData(memoryData);
-      return { success: true, isOffline: false };
-    }
-  } catch (e) {
-    console.warn('保存设置至后端失败，正在写入本地 LocalStorage 离线存储');
+): Promise<{ success: boolean; isOffline: boolean; error?: string }> {
+  const outcome = await apiRequest('/api/settings', {
+    method: 'POST',
+    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(settings)
+  });
+
+  const writeLocal = () => {
+    memoryData.settings = { ...memoryData.settings, ...settings };
+    setLocalStorageData(memoryData);
+  };
+
+  if (outcome.status === 'ok') {
+    writeLocal();
+    return { success: true, isOffline: false };
   }
 
-  memoryData.settings = { ...memoryData.settings, ...settings };
-  setLocalStorageData(memoryData);
+  if (outcome.status === 'rejected') {
+    return { success: false, isOffline: false, error: outcome.reason };
+  }
+
+  writeLocal();
   enqueue({ kind: 'save_settings', payload: settings });
   return { success: true, isOffline: true };
 }
@@ -409,91 +490,97 @@ export async function saveSettings(
 /**
  * 手动覆盖本地所有数据
  */
-export async function importAllData(data: AppData): Promise<{ success: boolean; isOffline: boolean }> {
+export async function importAllData(
+  data: AppData
+): Promise<{ success: boolean; isOffline: boolean; error?: string; failedDates?: string[] }> {
   memoryData = data;
   setLocalStorageData(data);
 
-  try {
-    await fetch(`${BACKEND_URL}/api/settings`, {
-      method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify(data.settings),
-      signal: AbortSignal.timeout(2000)
-    });
+  const settingsOutcome = await apiRequest('/api/settings', {
+    method: 'POST',
+    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify(data.settings)
+  });
 
+  // 后端不可达：整份数据已落本地，配置与日志一并入队待回放
+  if (settingsOutcome.status === 'offline') {
+    enqueue({ kind: 'save_settings', payload: data.settings });
     for (const [date, log] of Object.entries(data.logs)) {
-      await fetch(`${BACKEND_URL}/api/logs`, {
-        method: 'POST',
-        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-        body: JSON.stringify({ date, ...log }),
-        signal: AbortSignal.timeout(1500)
-      });
+      enqueue({ kind: 'save_log', date, payload: { date, ...log } });
     }
-    return { success: true, isOffline: false };
-  } catch (e) {
-    console.warn('同步数据到后端不完全，已完成本地 LocalStorage 的数据恢复');
     return { success: true, isOffline: true };
   }
+
+  if (settingsOutcome.status === 'rejected') {
+    return { success: false, isOffline: false, error: settingsOutcome.reason };
+  }
+
+  // 逐条写入日志，记录真正失败的日期而非静默忽略
+  const failedDates: string[] = [];
+  let lastError: string | undefined;
+  for (const [date, log] of Object.entries(data.logs)) {
+    const outcome = await apiRequest('/api/logs', {
+      method: 'POST',
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ date, ...log })
+    });
+    if (outcome.status === 'ok') continue;
+
+    lastError = outcome.reason;
+    if (outcome.status === 'offline') {
+      // 中途掉线：剩余条目全部入队，保证最终一致
+      enqueue({ kind: 'save_log', date, payload: { date, ...log } });
+      continue;
+    }
+    failedDates.push(date);
+  }
+
+  if (failedDates.length > 0) {
+    return {
+      success: false,
+      isOffline: false,
+      error: `${failedDates.length} 条日志被服务端拒绝（${lastError || '原因未知'}）`,
+      failedDates
+    };
+  }
+
+  return { success: true, isOffline: false };
 }
 
 /**
  * 还原出厂设置，清空所有日志与配置
  */
-export async function resetAllData(): Promise<{ success: boolean }> {
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/reset`, {
-      method: 'POST',
-      headers: getAuthHeaders(),
-      signal: AbortSignal.timeout(2000)
-    });
-    if (res.ok) {
-      // 清空本地缓存
-      memoryData = {
-        logs: {},
-        trash: {},
-        reports: {},
-        settings: {
-          job: 'frontend',
-          customJobName: '',
-          tone: 'professional',
-          similarityThreshold: 50,
-          rollingDays: 7,
-          aiEnabled: false,
-          aiApiKey: '',
-          aiApiUrl: 'https://openrouter.ai/api/v1',
-          aiModel: 'openrouter/free',
-          saveKeyToCloud: true
-        }
-      };
-      setLocalStorageData(memoryData);
-      return { success: true };
-    }
-  } catch (e) {
-    console.warn('后端重置失败，降级本地 LocalStorage 清理');
+export async function resetAllData(): Promise<{ success: boolean; isOffline: boolean; error?: string }> {
+  const outcome = await apiRequest('/api/reset', {
+    method: 'POST',
+    headers: getAuthHeaders()
+  });
+
+  const clearLocal = () => {
+    memoryData = {
+      logs: {},
+      trash: {},
+      reports: {},
+      settings: { ...DEFAULT_SETTINGS }
+    };
+    setLocalStorageData(memoryData);
+  };
+
+  if (outcome.status === 'ok') {
+    clearLocal();
+    return { success: true, isOffline: false };
   }
 
-  // 离线模式降级清理
+  // 服务端拒绝重置时绝不清本地数据，否则会造成不可恢复的单边数据丢失
+  if (outcome.status === 'rejected') {
+    return { success: false, isOffline: false, error: outcome.reason };
+  }
+
+  // 离线模式降级清理，并入队待网络恢复后重放
   localStorage.removeItem('winner_daily_data');
-  memoryData = {
-    logs: {},
-    trash: {},
-    reports: {},
-    settings: {
-      job: 'frontend',
-      customJobName: '',
-      tone: 'professional',
-      similarityThreshold: 50,
-      rollingDays: 7,
-      aiEnabled: false,
-      aiApiKey: '',
-      aiApiUrl: 'https://openrouter.ai/api/v1',
-      aiModel: 'openrouter/free',
-      saveKeyToCloud: true
-    }
-  };
-  setLocalStorageData(memoryData);
+  clearLocal();
   enqueue({ kind: 'reset' });
-  return { success: true };
+  return { success: true, isOffline: true };
 }
 
 /**
@@ -501,75 +588,92 @@ export async function resetAllData(): Promise<{ success: boolean }> {
  * 逐条执行真实服务器请求，成功后移除队列条目。
  * 供 App 挂载时 / 网络恢复时调用。
  */
-export async function syncOfflineOperations(): Promise<{ successCount: number; failCount: number; done: boolean }> {
-  return flushOfflineQueue(async (op) => {
-    try {
-      if (op.kind === 'reset') {
-        const res = await fetch(`${BACKEND_URL}/api/reset`, {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          signal: AbortSignal.timeout(15000)
-        });
-        return res.ok;
-      }
-      if (op.kind === 'delete_log' && op.date) {
-        const res = await fetch(`${BACKEND_URL}/api/logs/${op.date}`, {
-          method: 'DELETE',
-          headers: getAuthHeaders(),
-          signal: AbortSignal.timeout(15000)
-        });
-        return res.ok;
-      }
-      if (op.kind === 'restore_log' && op.date) {
-        const res = await fetch(`${BACKEND_URL}/api/logs/${op.date}/restore`, {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          signal: AbortSignal.timeout(15000)
-        });
-        return res.ok;
-      }
-      if (op.kind === 'clear_trash') {
-        const res = await fetch(`${BACKEND_URL}/api/trash/clear`, {
-          method: 'POST',
-          headers: getAuthHeaders(),
-          signal: AbortSignal.timeout(15000)
-        });
-        return res.ok;
-      }
-      if (op.kind === 'save_log' && op.date && op.payload) {
-        const payload = op.payload;
-        const res = await fetch(`${BACKEND_URL}/api/logs`, {
-          method: 'POST',
-          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(payload),
-          signal: AbortSignal.timeout(15000)
-        });
-        return res.ok;
-      }
-      if (op.kind === 'save_settings' && op.payload) {
-        const res = await fetch(`${BACKEND_URL}/api/settings`, {
-          method: 'POST',
-          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify(op.payload),
-          signal: AbortSignal.timeout(15000)
-        });
-        return res.ok;
-      }
-      if (op.kind === 'save_report' && op.payload && op.payload.weekKey) {
-        const res = await fetch(`${BACKEND_URL}/api/reports/${op.payload.weekKey}`, {
-          method: 'POST',
-          headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-          body: JSON.stringify({ content: op.payload.content }),
-          signal: AbortSignal.timeout(15000)
-        });
-        return res.ok;
-      }
-      return true;
-    } catch (e) {
-      console.warn('[offlineQueue] 同步操作失败（下一轮重试）:', op.kind, op.date, e);
-      return false;
+export async function syncOfflineOperations(): Promise<{
+  successCount: number;
+  failCount: number;
+  done: boolean;
+  droppedCount: number;
+  lastError?: string;
+}> {
+  /** 把单条离线操作映射为一次真实请求 */
+  const runQueuedOp = async (op: OfflineOp): Promise<ApiOutcome> => {
+    const jsonHeaders = getAuthHeaders({ 'Content-Type': 'application/json' });
+
+    if (op.kind === 'reset') {
+      return apiRequest('/api/reset', { method: 'POST', headers: getAuthHeaders() }, SYNC_TIMEOUT_MS);
     }
+    if (op.kind === 'delete_log' && op.date) {
+      return apiRequest(`/api/logs/${op.date}`, { method: 'DELETE', headers: getAuthHeaders() }, SYNC_TIMEOUT_MS);
+    }
+    if (op.kind === 'restore_log' && op.date) {
+      return apiRequest(`/api/logs/${op.date}/restore`, { method: 'POST', headers: getAuthHeaders() }, SYNC_TIMEOUT_MS);
+    }
+    if (op.kind === 'clear_trash') {
+      return apiRequest('/api/trash/clear', { method: 'POST', headers: getAuthHeaders() }, SYNC_TIMEOUT_MS);
+    }
+    if (op.kind === 'save_log' && op.date && op.payload) {
+      return apiRequest('/api/logs', {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(op.payload)
+      }, SYNC_TIMEOUT_MS);
+    }
+    if (op.kind === 'save_settings' && op.payload) {
+      return apiRequest('/api/settings', {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify(op.payload)
+      }, SYNC_TIMEOUT_MS);
+    }
+    if (op.kind === 'save_report' && op.payload && op.payload.weekKey) {
+      return apiRequest(`/api/reports/${op.payload.weekKey}`, {
+        method: 'POST',
+        headers: jsonHeaders,
+        body: JSON.stringify({ content: op.payload.content })
+      }, SYNC_TIMEOUT_MS);
+    }
+
+    // 结构不完整的历史遗留条目，直接视为已处理，避免永久堵塞队列
+    console.warn('[offlineQueue] 丢弃结构不完整的历史条目:', op.kind, op.date);
+    return { status: 'ok', res: new Response(null, { status: 204 }) };
+  };
+
+  let droppedCount = 0;
+  let lastError: string | undefined;
+
+  const result = await flushOfflineQueue(async (op) => {
+    const outcome = await runQueuedOp(op);
+    if (outcome.status === 'ok') return true;
+
+    lastError = outcome.reason;
+
+    // 网络问题：保留队列，下一轮重试
+    if (outcome.status === 'offline') return false;
+
+    // 登录态失效：保留队列，用户重新登录后即可完整回放（notifyAuthExpired 已通知 UI）
+    if (outcome.httpStatus === 401 || outcome.httpStatus === 403) return false;
+
+    // 服务端暂时性故障：保留队列重试
+    if (outcome.httpStatus >= 500) return false;
+
+    // 其余 4xx 为永久性拒绝（如载荷非法），重试永远不会成功。
+    // 必须丢弃，否则这条「毒丸」会把整个 FIFO 队列永久堵死。
+    droppedCount++;
+    console.error(
+      '[offlineQueue] 操作被服务端永久拒绝，已从队列移除:',
+      op.kind, op.date, outcome.httpStatus, outcome.reason
+    );
+    return true;
   });
+
+  // flushOfflineQueue 把「丢弃」也计为处理成功，这里扣除，
+  // 保证 successCount 语义是「真正同步落盘的条数」，不虚报给用户。
+  return {
+    ...result,
+    successCount: Math.max(0, result.successCount - droppedCount),
+    droppedCount,
+    lastError
+  };
 }
 
 import { DirectionOption } from '../types/ai';
@@ -656,29 +760,29 @@ export async function generateAIWeeklyReport(params: {
 export async function saveWeeklyReport(
   weekKey: string,
   content: string
-): Promise<{ success: boolean; isOffline: boolean }> {
-  // 本地同步更新缓存
+): Promise<{ success: boolean; isOffline: boolean; error?: string }> {
   const updateLocal = () => {
     memoryData.reports = memoryData.reports || {};
     memoryData.reports[weekKey] = content;
     setLocalStorageData(memoryData);
   };
-  updateLocal();
 
-  try {
-    const res = await fetch(`${BACKEND_URL}/api/reports/${weekKey}`, {
-      method: 'POST',
-      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ content }),
-      signal: AbortSignal.timeout(2000)
-    });
-    if (res.ok) {
-      return { success: true, isOffline: false };
-    }
-  } catch (e) {
-    console.warn('周报同步后端失败，已本地保存待网络恢复', e);
+  const outcome = await apiRequest(`/api/reports/${weekKey}`, {
+    method: 'POST',
+    headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
+    body: JSON.stringify({ content })
+  });
+
+  if (outcome.status === 'ok') {
+    updateLocal();
+    return { success: true, isOffline: false };
   }
 
+  if (outcome.status === 'rejected') {
+    return { success: false, isOffline: false, error: outcome.reason };
+  }
+
+  updateLocal();
   enqueue({ kind: 'save_report', payload: { weekKey, content } });
   return { success: true, isOffline: true };
 }

@@ -1,11 +1,18 @@
-import React, { useState, useEffect, Component, ErrorInfo, ReactNode } from 'react';
+import React, { useState, useEffect, useCallback, Component, ErrorInfo, ReactNode } from 'react';
 import Sidebar from './components/Sidebar';
 import DailyGenerator from './components/DailyGenerator';
 import HistoryCalendar from './components/HistoryCalendar';
 import WeeklyGenerator from './components/WeeklyGenerator';
 import Settings from './components/Settings';
 import LoginModal from './components/LoginModal';
-import { fetchAllData, AppData, syncOfflineOperations, removeAuthToken } from './utils/storage';
+import {
+  fetchAllData,
+  AppData,
+  syncOfflineOperations,
+  removeAuthToken,
+  DEFAULT_SETTINGS,
+  AUTH_EXPIRED_EVENT
+} from './utils/storage';
 import { clearAllDrafts } from './utils/draft';
 import { CheckCircle2, AlertTriangle, Info, Menu, PenSquare, RefreshCw } from 'lucide-react';
 
@@ -88,18 +95,7 @@ export default function App() {
     logs: {},
     trash: {},
     reports: {},
-    settings: {
-      job: 'frontend',
-      customJobName: '',
-      tone: 'professional',
-      similarityThreshold: 50,
-      rollingDays: 7,
-      aiEnabled: false,
-      aiApiKey: '',
-      aiApiUrl: 'https://openrouter.ai/api/v1',
-      aiModel: 'openrouter/free',
-      saveKeyToCloud: true
-    }
+    settings: { ...DEFAULT_SETTINGS }
   });
 
   const handleLoginSuccess = (user: string, settings: any) => {
@@ -124,72 +120,79 @@ export default function App() {
       logs: {},
       trash: {},
       reports: {},
-      settings: {
-        job: 'frontend',
-        customJobName: '',
-        tone: 'professional',
-        similarityThreshold: 50,
-        rollingDays: 7,
-        aiEnabled: false,
-        aiApiKey: '',
-        aiApiUrl: 'https://openrouter.ai/api/v1',
-        aiModel: 'openrouter/free',
-        saveKeyToCloud: true
-      }
+      settings: { ...DEFAULT_SETTINGS }
     });
   };
 
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'info'; show: boolean } | null>(null);
 
-  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'success') => {
+  const showToast = useCallback((message: string, type: 'success' | 'error' | 'info' = 'success') => {
     setToast({ message, type, show: true });
     setTimeout(() => setToast((prev) => (prev ? { ...prev, show: false } : null)), 3000);
-  };
+  }, []);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     const result = await fetchAllData();
     if (result && result.data) {
       setAppData({
         logs: result.data.logs || {},
         trash: result.data.trash || {},
         reports: result.data.reports || {},
-        settings: result.data.settings || {
-          job: 'frontend',
-          customJobName: '',
-          tone: 'professional',
-          similarityThreshold: 50,
-          rollingDays: 7,
-          aiEnabled: false,
-          aiApiKey: '',
-          aiApiUrl: 'https://openrouter.ai/api/v1',
-          aiModel: 'openrouter/free',
-          saveKeyToCloud: true
-        }
+        settings: result.data.settings || { ...DEFAULT_SETTINGS }
       });
     }
     setIsOffline(result.isOffline);
-  };
+    // 服务端明确拒绝（非网络不可达）时必须让用户知道，而不是静默展示本地陈旧数据
+    if (result.error) {
+      showToast(`读取服务端数据失败：${result.error}`, 'error');
+    }
+  }, [showToast]);
+
+  /**
+   * 登录凭证失效（401/403）时由 storage 层派发事件统一收敛：
+   * 退回登录页，同时保留离线队列，用户重新登录后可完整回放，
+   * 避免此前「请求持续 401 却静默当成离线」的情况。
+   */
+  const handleAuthExpired = useCallback((reason?: string) => {
+    setUsername((prev) => {
+      if (!prev) return prev;
+      localStorage.removeItem('winner_daily_user');
+      showToast(reason || '登录凭证已失效，请重新登录。', 'error');
+      return null;
+    });
+  }, [showToast]);
 
   useEffect(() => {
     loadData();
 
-    // 离线队列自动同步（挂载时检测）
-    syncOfflineOperations().then(result => {
+    // 离线队列回放结果统一上报：成功、被永久拒绝而丢弃、以及卡住的原因
+    const reportSync = (prefix: string) => (result: Awaited<ReturnType<typeof syncOfflineOperations>>) => {
       if (result.successCount > 0) {
-        showToast(`已同步 ${result.successCount} 条离线操作，数据已落盘`, 'success');
+        showToast(`${prefix}已同步 ${result.successCount} 条离线操作，数据已落盘`, 'success');
+        loadData();
       }
-    });
+      if (result.droppedCount > 0) {
+        showToast(`${result.droppedCount} 条离线操作被服务端拒绝已丢弃：${result.lastError || '原因未知'}`, 'error');
+      } else if (result.failCount > 0 && result.lastError) {
+        showToast(`仍有 ${result.failCount} 条离线操作待同步：${result.lastError}`, 'info');
+      }
+    };
+
+    // 离线队列自动同步（挂载时检测）
+    syncOfflineOperations().then(reportSync(''));
 
     // 网络恢复时自动回放离线队列
     const handleOnline = () => {
-      syncOfflineOperations().then(result => {
-        if (result.successCount > 0) {
-          showToast(`网络已恢复，已同步 ${result.successCount} 条离线操作`, 'success');
-          loadData();
-        }
-      });
+      syncOfflineOperations().then(reportSync('网络已恢复，'));
     };
     window.addEventListener('online', handleOnline);
+
+    // 登录凭证失效事件（由 storage 层在收到 401/403 时派发）
+    const onAuthExpired = (ev: Event) => {
+      const detail = (ev as CustomEvent<{ reason?: string }>).detail;
+      handleAuthExpired(detail && detail.reason);
+    };
+    window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
 
     // 监听跨标签页同步完成事件（其他标签页完成离线回放时刷新数据）
     try {
@@ -221,6 +224,7 @@ export default function App() {
     return () => {
       window.removeEventListener('resize', handleResize);
       window.removeEventListener('online', handleOnline);
+      window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
       try {
         const chan = (window as any).__winnerDailySyncChannel;
         if (chan) chan.close();
@@ -228,7 +232,7 @@ export default function App() {
         // ignore close error
       }
     };
-  }, []);
+  }, [loadData, handleAuthExpired, showToast]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -256,12 +260,17 @@ export default function App() {
     return (
       <div style={{ position: 'relative', minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <div className="ambient-light-canvas">
+          <div className="ambient-grid-matrix" />
+          <div className="ambient-beam-ray" />
           <div className="ambient-orb ambient-orb-1" />
           <div className="ambient-orb ambient-orb-2" />
           <div className="ambient-orb ambient-orb-3" />
+          <div className="ambient-orb ambient-orb-4" />
         </div>
 
-        <LoginModal onLoginSuccess={handleLoginSuccess} showToast={showToast} />
+        <div className="view-enter-transition" style={{ width: '100%', maxWidth: '440px', padding: '0 20px', zIndex: 1 }}>
+          <LoginModal onLoginSuccess={handleLoginSuccess} showToast={showToast} />
+        </div>
         {toast && (
           <div className="toast-container">
             <div className={`toast-item ${toast.show ? 'show' : ''} ${toast.type}`}>
@@ -279,9 +288,12 @@ export default function App() {
   return (
     <div className="app-layout">
       <div className="ambient-light-canvas">
+        <div className="ambient-grid-matrix" />
+        <div className="ambient-beam-ray" />
         <div className="ambient-orb ambient-orb-1" />
         <div className="ambient-orb ambient-orb-2" />
         <div className="ambient-orb ambient-orb-3" />
+        <div className="ambient-orb ambient-orb-4" />
       </div>
 
       <header className="mobile-topbar">
@@ -320,7 +332,9 @@ export default function App() {
 
       <main className="main-content">
         <TabErrorBoundary tab={currentTab}>
-          {renderContent()}
+          <div key={currentTab} className="view-enter-transition" style={{ width: '100%' }}>
+            {renderContent()}
+          </div>
         </TabErrorBoundary>
       </main>
 

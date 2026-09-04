@@ -47,7 +47,7 @@ interface InputPanelProps {
   selectedDirectionId?: string | null;
   selectDirection?: (id: string) => void;
   isFetchingDirections?: boolean;
-  fetchDirections?: (forceOnline?: boolean) => void;
+  fetchDirections?: (forceOnline?: boolean, targetPlatform?: string) => void;
   customDirectionNote?: string;
   setCustomDirectionNote?: (note: string) => void;
 }
@@ -425,7 +425,7 @@ export function InputPanel({
                 <div
                   key={dir.id || idx}
                   onClick={() => selectDirection && selectDirection(dir.id)}
-                  className="clickable"
+                  className={`clickable stagger-item-${(idx % 5) + 1} ${isSelected ? 'pulse-glow-badge' : ''}`}
                   style={{
                     padding: '11px 13px',
                     borderRadius: '12px',
@@ -436,7 +436,7 @@ export function InputPanel({
                     flexDirection: 'column',
                     gap: '4px',
                     cursor: 'pointer',
-                    transition: 'all 0.2s ease',
+                    transition: 'all 0.2s cubic-bezier(0.16, 1, 0.3, 1)',
                     position: 'relative'
                   }}
                 >
@@ -474,7 +474,7 @@ export function InputPanel({
       <button
         onClick={handleGenerate}
         disabled={generating}
-        className="clickable glow-btn"
+        className="clickable glow-btn btn-shimmer-effect"
         style={{
           padding: '13px 20px',
           borderRadius: '14px',

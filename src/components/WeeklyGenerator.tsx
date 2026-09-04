@@ -83,6 +83,9 @@ export default function WeeklyGenerator({ appData, showToast }: WeeklyGeneratorP
     const saved = (appData.reports || {})[currentWeekKey];
     setWeeklyReport(saved && saved.trim() ? saved : '');
     setCompareOpen(false);
+    // 依赖仅在周/年切换时触发：闭包读取渲染时最新的日志与周报，
+    // 刻意不在每次日志归档时重跑（否则会把已展开的周报对比面板收回去）。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedYear, selectedWeek, currentWeekKey]);
 
   // 本地规则聚合周报
@@ -256,9 +259,15 @@ export default function WeeklyGenerator({ appData, showToast }: WeeklyGeneratorP
   const saveReportToServer = async (key: string, content: string) => {
     mentallyMarkSaved(key, content);
     const res = await saveWeeklyReport(key, content);
-    if (showToast) {
-      showToast(res.isOffline ? '周报已本地保存，联网后将自动同步' : `周报 ${key} 已保存`, res.isOffline ? 'info' : 'success');
+    if (!showToast) return;
+    if (!res.success) {
+      showToast(`周报保存失败：${res.error || '服务端拒绝了本次写入'}`, 'error');
+      return;
     }
+    showToast(
+      res.isOffline ? '周报已本地保存，联网后将自动同步' : `周报 ${key} 已保存`,
+      res.isOffline ? 'info' : 'success'
+    );
   };
 
   const mentallyMarkSaved = (key: string, content: string) => {

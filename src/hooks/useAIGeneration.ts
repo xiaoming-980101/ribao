@@ -12,7 +12,7 @@ import {
   DEFAULT_AI_API_URL,
   DEFAULT_AI_MODEL,
   fetchAIDirections,
-  getCurrentUser
+  getAuthHeaders
 } from '../utils/storage';
 import {
   normalizeModelId,
@@ -222,6 +222,9 @@ export function useAIGeneration({
     if (mode === 'idle' || mode === 'study') {
       fetchDirections();
     }
+    // 仅当模式/岗位变化时拉取：fetchDirections 闭包取渲染时最新密钥/日志/平台备注，
+    // 用户切换模型或改平台备注后由手动拉取触发，无需在此重跑。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, job, customJobName]);
 
   const selectedDirection = directions.find((d) => d.id === selectedDirectionId) || null;
@@ -296,13 +299,9 @@ export function useAIGeneration({
     }
     showToast('正在从大模型上游同步支持的模型列表...', 'info');
     try {
-      const user = getCurrentUser();
       const res = await fetch(`${BACKEND_URL}/api/ai/models`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Name': user
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({
           aiApiKey: aiSettings.aiApiKey,
           aiApiUrl: aiSettings.aiApiUrl
@@ -324,7 +323,6 @@ export function useAIGeneration({
   };
 
   const requestGenerate = async (targetModel: string, overrides: any = {}, signal?: AbortSignal) => {
-    const user = getCurrentUser();
     const historyLogs = Object.entries(appData.logs || {})
       .sort(([a], [b]) => b.localeCompare(a))
       .slice(0, 10)
@@ -364,13 +362,9 @@ export function useAIGeneration({
         ? AbortSignal.any([signal, timeoutSignal])
         : signal) // 老环境无 AbortSignal.any 时退回仅外部信号
       : timeoutSignal;
-
     const res = await fetch(`${BACKEND_URL}/api/ai/generate`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'X-User-Name': user
-      },
+      headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
       body: JSON.stringify(payload),
       signal: combinedSignal
     });

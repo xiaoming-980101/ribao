@@ -278,7 +278,7 @@ export function parseDirections(rawText, job, mode, customJobName = '', platform
           id: item.id || `dir_${idx + 1}`,
           title: String(item.title || `工作方向 ${idx + 1}`).replace(/^[0-9]+[、.\s]*/, '').trim(),
           summary: String(item.summary || '').trim(),
-          tag: String(item.tag || '日常维护').trim()
+          tag: String(item.tag || '日常维护').trim().slice(0, 4), // 上游 tag 可能超长，限 4 字防打乱卡片布局（React 渲染自动转义 HTML）
         }));
       }
     } catch (e) {
@@ -294,12 +294,13 @@ export function parseDirections(rawText, job, mode, customJobName = '', platform
     const shuffled = [...pool].sort(() => Math.random() - 0.5);
     return shuffled.slice(0, 5).map((item, idx) => {
       if (typeof item === 'object') {
-        const title = cleanPlatform ? `${cleanPlatform}${item.title}` : item.title;
+        const title = cleanPlatform ? `${cleanPlatform}・${item.title}` : item.title;
         const summary = cleanPlatform ? `针对${cleanPlatform}，${item.summary}` : item.summary;
         return {
           ...item,
           id: `local_dir_${idx + 1}`,
-          title: title.length > 18 ? title.slice(0, 17) : title,
+          // 前缀拼接后限长，用省略号收尾而非硬切（避免残留残缺词）
+          title: title.length > 18 ? `${title.slice(0, 16)}…` : title,
           summary
         };
       }
@@ -319,7 +320,6 @@ export function buildPrompts({
   userInput,
   job = 'frontend',
   customJobName = '',
-  tone = 'professional',
   mode = 'task',
   currentTitle = '',
   currentContent = '',
@@ -346,7 +346,7 @@ export function buildPrompts({
 
   const systemPrompt = `你是一名严谨高效的资深 ${jobName}。你擅长把研发工作提炼为简明、客观、干练的工作事项记录，坚决杜绝日记式流水账（严禁出现"今天我花了时间"、"刚刚发现"、"挺省事的"等主观口语），字句精简有力。`;
 
-  let userPrompt = '';
+  let userPrompt;
 
   if (isDoubaoPromptMode) {
     userPrompt = `请生成一段简明提示词模板，帮我把研发任务提炼成客观精练的工作记录。\n事项输入：${doubaoTasksText}\n要求：不要分序号，写成简练干练的一两句话（约 35 到 60 字），包含核心动作与自测状态，非日记体。\n仅输出提示词内容，无代码块。`;
@@ -357,7 +357,7 @@ export function buildPrompts({
   }
 
   return { systemPrompt, userPrompt };
-};
+}
 
 export function parseGeneratedLog(rawText, defaultTitle = '', defaultContent = '') {
   if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
@@ -377,7 +377,7 @@ export function parseGeneratedLog(rawText, defaultTitle = '', defaultContent = '
 
   const titleMatch = text.match(/(?:^|\n)\s*(?:\*\*|__)?(?:标题|事项名称|主题|Title)(?:\*\*|__)?\s*[:：]\s*(.+?)(?=\n|$)/i);
   if (titleMatch && titleMatch[1]) {
-    title = titleMatch[1].trim().replace(/^["'*#\s\[\]]+|["'*#\s\[\]]+$/g, '');
+    title = titleMatch[1].trim().replace(/^["'*#\s[\]]+|["'*#\s[\]]+$/g, '');
   }
 
   const contentMatch = text.match(/(?:^|\n)\s*(?:\*\*|__)?(?:内容|工作内容|事项内容|流水|Content)(?:\*\*|__)?\s*[:：]\s*([\s\S]+)/i);
@@ -398,7 +398,11 @@ export function parseGeneratedLog(rawText, defaultTitle = '', defaultContent = '
   extractedContent = extractedContent
     .replace(/^(?:标题|事项名称|主题)[:：].*$/gm, '')
     .replace(/^[0-9]+[、.\s]+/gm, '')
-    .replace(/\n+/g, '')
+    // 逐行清理后以换行重新连接：直接删掉换行会把相邻两行的末尾与开头粘成一个词
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n')
     .replace(/^[""]|[""]$/g, '')
     .trim();
 
@@ -410,7 +414,7 @@ export function parseGeneratedLog(rawText, defaultTitle = '', defaultContent = '
     title = defaultTitle || extractedContent.slice(0, 14) || '前端开发与优化';
   }
 
-  title = title.replace(/^["'*#\s\[\]]+|["'*#\s\[\]]+$/g, '').trim();
+  title = title.replace(/^["'*#\s[\]]+|["'*#\s[\]]+$/g, '').trim();
 
   return { title, content: extractedContent };
 }

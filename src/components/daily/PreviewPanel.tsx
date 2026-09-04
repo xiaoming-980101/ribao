@@ -27,6 +27,8 @@ interface PreviewPanelProps {
   
   maxSimilarity: number;
   similarDate: string;
+  /** 查重防抖窗口内为 true，用于避免展示上一次输入的陈旧数值 */
+  isCheckingSimilarity?: boolean;
   simLevel: {
     level: 'safe' | 'warning' | 'danger';
     color: string;
@@ -73,6 +75,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
   handleSave,
   maxSimilarity,
   similarDate,
+  isCheckingSimilarity = false,
   simLevel,
   aiSettings,
   compareMode,
@@ -389,9 +392,15 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
             />
             <div style={{ fontSize: '12px' }}>
               <span style={{ color: 'var(--text-secondary)' }}>历史规范一致性指数: </span>
-              <span style={{ fontWeight: '800', color: simLevel.color }}>{maxSimilarity}%</span>
-              <span style={{ color: 'var(--text-muted)', marginLeft: '6px' }}>({simLevel.text})</span>
-              {maxSimilarity > 0 && (
+              {isCheckingSimilarity ? (
+                <span style={{ fontWeight: '800', color: 'var(--text-muted)' }}>比对中...</span>
+              ) : (
+                <>
+                  <span style={{ fontWeight: '800', color: simLevel.color }}>{maxSimilarity}%</span>
+                  <span style={{ color: 'var(--text-muted)', marginLeft: '6px' }}>({simLevel.text})</span>
+                </>
+              )}
+              {!isCheckingSimilarity && maxSimilarity > 0 && (
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                   参考基准日期: {similarDate}
                 </div>
@@ -432,7 +441,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
           <button
             onClick={handleSave}
-            className="clickable"
+            className="clickable btn-shimmer-effect"
             disabled={saveStatus === 'saving'}
             style={{
               padding: '11px 22px',

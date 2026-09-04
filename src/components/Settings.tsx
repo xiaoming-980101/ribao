@@ -21,12 +21,12 @@ import {
   DEFAULT_AI_API_URL,
   DEFAULT_AI_MODEL,
   ModelOption,
-  getCurrentUser,
   getUserAISettings,
   saveUserAISettings,
   loadCachedModels,
   saveCachedModels,
-  isOpenRouterApiUrl
+  isOpenRouterApiUrl,
+  getAuthHeaders
 } from '../utils/storage';
 
 interface SettingsProps {
@@ -111,12 +111,9 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
     setIsSyncing(true);
     showToast('正在同步云端大模型可用型号列表...', 'info');
     try {
-      const response = await fetch(`${BACKEND_URL}/api/models`, {
+      const response = await fetch(`${BACKEND_URL}/api/ai/models`, {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-User-Name': getCurrentUser()
-        },
+        headers: getAuthHeaders({ 'Content-Type': 'application/json' }),
         body: JSON.stringify({ aiApiKey, aiApiUrl })
       });
       
@@ -159,7 +156,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
       showToast('系统已彻底恢复出厂初始状态！', 'info');
       onSaveSuccess();
     } else {
-      showToast('恢复出厂设置失败，请确认后端 API 服务已正常开启！', 'error');
+      showToast(`恢复出厂设置失败：${res.error || '服务端拒绝了本次操作'}。本地数据未被清除。`, 'error');
     }
   };
 
@@ -213,7 +210,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
         onSaveSuccess();
         setTimeout(() => setSaveStatus(false), 2500);
       } else {
-        showToast('保存失败，请检查后端网络状态！', 'error');
+        showToast(`保存失败：${res.error || '服务端拒绝了本次写入'}`, 'error');
       }
     } catch (e: any) {
       console.warn('在线保存配置失败，已保存至本地');
@@ -253,10 +250,15 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
         if (json && (json.logs || json.settings)) {
           const res = await importAllData(json);
           if (res.success) {
-            showToast('数据已成功恢复！正在刷新工作台...', 'success');
+            showToast(
+              res.isOffline
+                ? '数据已恢复至本地，联网后将自动同步至服务器...'
+                : '数据已成功恢复！正在刷新工作台...',
+              res.isOffline ? 'info' : 'success'
+            );
             onSaveSuccess();
           } else {
-            showToast('导入失败，请检查后端 API 服务！', 'error');
+            showToast(`导入失败：${res.error || '服务端拒绝了本次写入'}`, 'error');
           }
         } else {
           showToast('导入文件格式不合法，请上传正确的备份 JSON 文件！', 'error');

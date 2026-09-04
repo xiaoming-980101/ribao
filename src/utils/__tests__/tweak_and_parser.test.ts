@@ -43,4 +43,21 @@ describe('parseGeneratedLog & Tweak Format Robustness Tests', () => {
     expect(res.content).not.toContain('3.');
     expect(res.content).toContain('排查了表单切换时的必填校验遗漏');
   });
+  it('多行内容必须按行重新连接，不得把相邻两行的末尾与开头粘成一个词', () => {
+    // 模型未按「一段话」要求输出、且行尾没有标点时，旧实现直接删换行会粘连成「缓存击穿优化了」
+    const raw = '标题：缓存与并发排查' + '\n' + '内容：' + '\n' + '排查用户中台的 Redis 缓存击穿' + '\n' + '优化了并发下单的重复提交拦截';
+    const res = parseGeneratedLog(raw);
+    expect(res.title).toBe('缓存与并发排查');
+    expect(res.content).not.toContain('缓存击穿优化了');
+    expect(res.content.split('\n')).toEqual([
+      '排查用户中台的 Redis 缓存击穿',
+      '优化了并发下单的重复提交拦截'
+    ]);
+  });
+
+  it('空行与多余空白应被清理，不产生连续空行', () => {
+    const raw = '标题：日常维护' + '\n' + '内容：' + '\n' + '清理废弃组件。' + '\n' + '\n' + '   ' + '\n' + '补充空态提示。';
+    const res = parseGeneratedLog(raw);
+    expect(res.content).toBe('清理废弃组件。' + '\n' + '补充空态提示。');
+  });
 });

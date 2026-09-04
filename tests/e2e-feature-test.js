@@ -177,7 +177,7 @@ async function runE2ETests() {
 
     // 8. 方向罗盘推荐切入点
     console.log('\n👉 [测试 8] 智能工作方向启发式推荐 (Directions Engine)');
-    const dirResFrontend = await request('POST', '/api/directions', authHeaders, {
+    const dirResFrontend = await request('POST', '/api/ai/directions', authHeaders, {
       job: 'frontend',
       mode: 'idle'
     });
@@ -185,20 +185,47 @@ async function runE2ETests() {
     assert(Array.isArray(dirResFrontend.body.directions) && dirResFrontend.body.directions.length === 5, '稳定返回 5 个高质量切入点');
     assert(dirResFrontend.body.directions[0].title && dirResFrontend.body.directions[0].summary, '切入点包含 title 与 summary');
 
-    const dirResBackendStudy = await request('POST', '/api/directions', authHeaders, {
+    const dirResBackendStudy = await request('POST', '/api/ai/directions', authHeaders, {
       job: 'backend',
       mode: 'study'
     });
     assert(dirResBackendStudy.status === 200 && dirResBackendStudy.body.directions.length === 5, '后端学习模式稳定返回 5 个切入点');
 
+    // 9. 接口鉴权契约：AI 接口必须拒绝无凭证请求（曾因前端仍发废弃的 X-User-Name 头而恒 401）
+    console.log('\n👉 [测试 9] AI 接口鉴权契约与未匹配接口兜底');
+    const AI_PATHS = ['/api/ai/generate', '/api/ai/models', '/api/ai/directions', '/api/ai/weekly'];
+    for (const aiPath of AI_PATHS) {
+      const noAuth = await request('POST', aiPath, { 'X-User-Name': 'admin' }, { job: 'frontend', mode: 'idle' });
+      assert(noAuth.status === 401, `${aiPath} 无 token 时拒绝访问 (HTTP 401)`);
+
+      const withAuth = await request('POST', aiPath, authHeaders, { job: 'frontend', mode: 'idle', weekLogs: [] });
+      assert(withAuth.status !== 401, `${aiPath} 携带 Bearer token 时通过鉴权`);
+    }
+
+    // 未匹配的接口必须返回 JSON 而不是被 SPA 通配吞成 index.html
+    const notFound = await request('GET', '/api/definitely-not-exist', authHeaders);
+    assert(notFound.status === 404, '未匹配接口返回 404');
+    assert(notFound.body && typeof notFound.body.error === 'string', '未匹配接口返回 JSON 错误体而非 HTML');
+
     console.log('\n====================================================');
     console.log(`🎉 全部 E2E 功能测试完成：${passedCount}/${totalCount} 项全量通过！`);
     console.log('====================================================');
-    process.exit(0);
+    shutdown(0);
   } catch (err) {
     console.error('\n💥 E2E 测试过程中发生未捕获异常:', err);
-    process.exit(1);
+    shutdown(1);
   }
+}
+
+/** 关停测试 HTTP 服务器后退出，避免遗留监听端口 */
+function shutdown(code) {
+  if (!server) {
+    process.exit(code);
+    return;
+  }
+  server.close(() => process.exit(code));
+  // 兜底：连接未及时释放时强制退出
+  setTimeout(() => process.exit(code), 2000).unref();
 }
 
 // 启动测试 HTTP 服务器并运行用例

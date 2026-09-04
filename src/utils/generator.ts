@@ -602,8 +602,8 @@ export function generateRandomDaily(
   const titles = JOB_TITLES[jobKey] || JOB_TITLES.generic;
   const jobName = getJobDisplayName(job, customJobName);
 
-  let title = '';
-  let content = '';
+  let title: string;
+  let content: string;
 
   if (isStudy) {
     title = getRandomElement(titles.study) || `${jobName}技术预研与学习`;
@@ -797,29 +797,37 @@ export function calculateSimilarity(str1: string, str2: string): number {
   const ngramSimilarity = total1 + total2 > 0 ? (2 * intersection) / (total1 + total2) * 100 : 0;
 
   // 2. 计算 Levenshtein 编辑距离
+  // 只保留滚动的前后两行（结果与完整二维矩阵完全一致），
+  // 空间由 O(len1 × len2) 降为 O(len2)，同时避免每次比对分配 len1+1 个数组。
   const len1 = s1.length;
   const len2 = s2.length;
-  const matrix: number[][] = [];
 
-  for (let i = 0; i <= len1; i++) {
-    matrix[i] = [i];
-  }
+  let prevRow = new Uint32Array(len2 + 1);
+  let currRow = new Uint32Array(len2 + 1);
+
   for (let j = 0; j <= len2; j++) {
-    matrix[0][j] = j;
+    prevRow[j] = j;
   }
 
   for (let i = 1; i <= len1; i++) {
+    currRow[0] = i;
+    const code1 = s1.charCodeAt(i - 1);
     for (let j = 1; j <= len2; j++) {
-      const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
-      matrix[i][j] = Math.min(
-        matrix[i - 1][j] + 1,
-        matrix[i][j - 1] + 1,
-        matrix[i - 1][j - 1] + cost
-      );
+      const cost = code1 === s2.charCodeAt(j - 1) ? 0 : 1;
+      const deletion = prevRow[j] + 1;
+      const insertion = currRow[j - 1] + 1;
+      const substitution = prevRow[j - 1] + cost;
+      let min = deletion;
+      if (insertion < min) min = insertion;
+      if (substitution < min) min = substitution;
+      currRow[j] = min;
     }
+    const swap = prevRow;
+    prevRow = currRow;
+    currRow = swap;
   }
 
-  const distance = matrix[len1][len2];
+  const distance = prevRow[len2];
   const maxLength = Math.max(len1, len2);
   const levSimilarity = (1 - distance / maxLength) * 100;
 

@@ -22,6 +22,8 @@ router.post('/register', authLimiter, (req, res) => {
   db.users[normalizedUser] = {
     password: hashPassword(password),
     logs: {},
+    trash: {},
+    reports: {},
     settings: createDefaultSettings()
   };
 

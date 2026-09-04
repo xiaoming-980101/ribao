@@ -36,7 +36,9 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # ESLint 10 要求 ^20.19 || ^22.13 || >=24，Vite 8 要求 ^20.19 || >=22.12；
+          # Node 20 已 EOL，统一提升到 22 LTS
+          node-version: '22'
           cache: npm
 
       - name: Install dependencies
@@ -44,6 +46,9 @@ jobs:
 
       - name: Code style check (Lint)
         run: npm run lint
+
+      - name: Type check (TypeScript)
+        run: npm run typecheck
 
       - name: Run unit tests
         run: npm run test

@@ -203,10 +203,15 @@ export default function HistoryCalendar({
 
     const res = await saveLog(selectedDateStr, logData);
     if (res.success) {
-      showToast(`${selectedDateStr} 日报保存成功，已同步写入数据库！`, 'success');
+      showToast(
+        res.isOffline
+          ? `${selectedDateStr} 日报已暂存本地，联网后将自动同步。`
+          : `${selectedDateStr} 日报保存成功，已同步写入数据库！`,
+        res.isOffline ? 'info' : 'success'
+      );
       onLogChange();
     } else {
-      showToast('保存失败，请确认后端 API 服务已正常开启！', 'error');
+      showToast(`保存失败：${res.error || '服务端拒绝了本次写入'}`, 'error');
     }
   };
 
@@ -221,7 +226,7 @@ export default function HistoryCalendar({
         setQuickContent('');
         setShowHistory(false);
       } else {
-        showToast('删除失败！', 'error');
+        showToast(`删除失败：${res.error || '服务端拒绝了本次操作'}`, 'error');
       }
     }
   };
@@ -233,7 +238,7 @@ export default function HistoryCalendar({
       showToast(`${date} 的日志已从回收站恢复！`, 'success');
       onLogChange();
     } else {
-      showToast('恢复失败！', 'error');
+      showToast(`恢复失败：${res.error || '服务端拒绝了本次操作'}`, 'error');
     }
   };
 
@@ -246,7 +251,7 @@ export default function HistoryCalendar({
         showToast('回收站已清空。', 'info');
         onLogChange();
       } else {
-        showToast('清空回收站失败！', 'error');
+        showToast(`清空回收站失败：${res.error || '服务端拒绝了本次操作'}`, 'error');
       }
     }
   };
