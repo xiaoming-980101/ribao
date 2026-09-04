@@ -101,156 +101,195 @@ html, body {
   pointer-events: none;
   z-index: 0;
   overflow: hidden;
+  background: radial-gradient(circle at 50% 10%, rgba(99, 102, 241, 0.08) 0%, transparent 60%);
 }
 
-/* 微科技点阵矩阵 (Subtle Tech Dot Matrix) - 增加纵深景深 */
+/* 微科技高精密点阵矩阵 (High-Precision Tech Dot Matrix) - 显著提升科技质感与空间景深 */
 .ambient-grid-matrix {
   position: absolute;
   inset: 0;
-  background-image: radial-gradient(rgba(148, 163, 184, 0.12) 1px, transparent 1px);
-  background-size: 32px 32px;
-  mask-image: radial-gradient(circle at 50% 40%, black 40%, transparent 85%);
-  -webkit-mask-image: radial-gradient(circle at 50% 40%, black 40%, transparent 85%);
-  opacity: 0.7;
+  background-image: 
+    radial-gradient(circle at center, rgba(129, 140, 248, 0.22) 1.2px, transparent 1.2px),
+    linear-gradient(to right, rgba(255, 255, 255, 0.015) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(255, 255, 255, 0.015) 1px, transparent 1px);
+  background-size: 24px 24px, 48px 48px, 48px 48px;
+  mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, black 50%, transparent 95%);
+  -webkit-mask-image: radial-gradient(ellipse 90% 70% at 50% 30%, black 50%, transparent 95%);
+  opacity: 0.85;
 }
 
 [data-theme='light'] .ambient-grid-matrix {
-  background-image: radial-gradient(rgba(100, 116, 139, 0.14) 1px, transparent 1px);
-  opacity: 0.5;
+  background-image: 
+    radial-gradient(circle at center, rgba(99, 102, 241, 0.2) 1.2px, transparent 1.2px),
+    linear-gradient(to right, rgba(0, 0, 0, 0.02) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(0, 0, 0, 0.02) 1px, transparent 1px);
+  opacity: 0.65;
 }
 
-/* 顶部极光呼吸光束 (Aurora Beam Shimmer) */
+/* 顶部极光流光束 (Aurora Beam Ray) */
 .ambient-beam-ray {
   position: absolute;
   top: 0;
-  left: 10%;
-  right: 10%;
-  height: 1px;
-  background: linear-gradient(90deg, transparent 0%, rgba(99, 102, 241, 0.4) 30%, rgba(56, 189, 248, 0.5) 50%, rgba(168, 85, 247, 0.4) 70%, transparent 100%);
-  filter: drop-shadow(0 0 12px rgba(99, 102, 241, 0.6));
-  animation: beamPulse 8s ease-in-out infinite alternate;
+  left: 5%;
+  right: 5%;
+  height: 2px;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(99, 102, 241, 0.6) 20%,
+    rgba(56, 189, 248, 0.8) 50%,
+    rgba(168, 85, 247, 0.6) 80%,
+    transparent 100%
+  );
+  filter: drop-shadow(0 0 16px rgba(99, 102, 241, 0.85)) blur(0.5px);
+  animation: beamPulse 6s ease-in-out infinite alternate;
 }
 
+/* 极光流体光斑 (Vivid Aurora Orbs) - 提升饱和度与视觉辐射 */
 .ambient-orb {
   position: absolute;
   border-radius: 50%;
-  filter: blur(100px);
-  opacity: 0.48;
+  filter: blur(80px);
+  opacity: 0.6;
   will-change: transform;
 }
 
 [data-theme='dark'] .ambient-orb-1 {
-  width: 580px;
-  height: 580px;
-  top: -120px;
+  width: 650px;
+  height: 650px;
+  top: -140px;
   left: -80px;
-  background: radial-gradient(circle, rgba(99, 102, 241, 0.42) 0%, rgba(99, 102, 241, 0) 70%);
-  animation: floatOrb1 24s ease-in-out infinite alternate;
+  background: radial-gradient(circle, rgba(99, 102, 241, 0.55) 0%, rgba(99, 102, 241, 0.1) 55%, transparent 70%);
+  animation: floatOrb1 20s ease-in-out infinite alternate;
 }
 
 [data-theme='dark'] .ambient-orb-2 {
-  width: 620px;
-  height: 620px;
-  bottom: -140px;
+  width: 700px;
+  height: 700px;
+  bottom: -150px;
   right: -90px;
-  background: radial-gradient(circle, rgba(168, 85, 247, 0.32) 0%, rgba(168, 85, 247, 0) 70%);
-  animation: floatOrb2 28s ease-in-out infinite alternate;
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.45) 0%, rgba(168, 85, 247, 0.1) 55%, transparent 70%);
+  animation: floatOrb2 24s ease-in-out infinite alternate;
 }
 
 [data-theme='dark'] .ambient-orb-3 {
-  width: 460px;
-  height: 460px;
-  top: 35%;
-  left: 42%;
-  background: radial-gradient(circle, rgba(56, 189, 248, 0.22) 0%, rgba(56, 189, 248, 0) 70%);
-  animation: floatOrb3 20s ease-in-out infinite alternate;
+  width: 500px;
+  height: 500px;
+  top: 25%;
+  left: 35%;
+  background: radial-gradient(circle, rgba(56, 189, 248, 0.35) 0%, rgba(56, 189, 248, 0.08) 50%, transparent 70%);
+  animation: floatOrb3 18s ease-in-out infinite alternate;
 }
 
 [data-theme='dark'] .ambient-orb-4 {
-  width: 400px;
-  height: 400px;
-  top: 15%;
-  right: 18%;
-  background: radial-gradient(circle, rgba(16, 185, 129, 0.18) 0%, rgba(16, 185, 129, 0) 70%);
-  animation: floatOrb4 22s ease-in-out infinite alternate;
+  width: 480px;
+  height: 480px;
+  top: 10%;
+  right: 12%;
+  background: radial-gradient(circle, rgba(16, 185, 129, 0.28) 0%, rgba(16, 185, 129, 0.06) 50%, transparent 70%);
+  animation: floatOrb4 20s ease-in-out infinite alternate;
 }
 
 [data-theme='light'] .ambient-orb-1 {
-  width: 560px;
-  height: 560px;
+  width: 600px;
+  height: 600px;
   top: -100px;
   left: -80px;
-  background: radial-gradient(circle, rgba(199, 210, 254, 0.65) 0%, rgba(199, 210, 254, 0) 70%);
-  animation: floatOrb1 24s ease-in-out infinite alternate;
+  background: radial-gradient(circle, rgba(199, 210, 254, 0.8) 0%, rgba(199, 210, 254, 0.2) 60%, transparent 75%);
+  animation: floatOrb1 20s ease-in-out infinite alternate;
 }
 
 [data-theme='light'] .ambient-orb-2 {
-  width: 600px;
-  height: 600px;
+  width: 650px;
+  height: 650px;
   bottom: -120px;
   right: -80px;
-  background: radial-gradient(circle, rgba(233, 213, 255, 0.55) 0%, rgba(233, 213, 255, 0) 70%);
-  animation: floatOrb2 28s ease-in-out infinite alternate;
+  background: radial-gradient(circle, rgba(233, 213, 255, 0.7) 0%, rgba(233, 213, 255, 0.2) 60%, transparent 75%);
+  animation: floatOrb2 24s ease-in-out infinite alternate;
 }
 
 [data-theme='light'] .ambient-orb-3 {
-  width: 450px;
-  height: 450px;
-  top: 35%;
-  left: 40%;
-  background: radial-gradient(circle, rgba(186, 230, 253, 0.45) 0%, rgba(186, 230, 253, 0) 70%);
-  animation: floatOrb3 20s ease-in-out infinite alternate;
+  width: 500px;
+  height: 500px;
+  top: 30%;
+  left: 38%;
+  background: radial-gradient(circle, rgba(186, 230, 253, 0.6) 0%, rgba(186, 230, 253, 0.15) 55%, transparent 75%);
+  animation: floatOrb3 18s ease-in-out infinite alternate;
 }
 
 [data-theme='light'] .ambient-orb-4 {
-  width: 380px;
-  height: 380px;
-  top: 12%;
-  right: 15%;
-  background: radial-gradient(circle, rgba(167, 243, 208, 0.35) 0%, rgba(167, 243, 208, 0) 70%);
-  animation: floatOrb4 22s ease-in-out infinite alternate;
+  width: 450px;
+  height: 450px;
+  top: 10%;
+  right: 12%;
+  background: radial-gradient(circle, rgba(167, 243, 208, 0.5) 0%, rgba(167, 243, 208, 0.15) 55%, transparent 75%);
+  animation: floatOrb4 20s ease-in-out infinite alternate;
 }
 
 @keyframes floatOrb1 {
   0%   { transform: translate(0, 0) scale(1); }
-  50%  { transform: translate(45px, 60px) scale(1.08); }
-  100% { transform: translate(-35px, 30px) scale(0.96); }
+  50%  { transform: translate(60px, 70px) scale(1.12); }
+  100% { transform: translate(-40px, 40px) scale(0.94); }
 }
 
 @keyframes floatOrb2 {
   0%   { transform: translate(0, 0) scale(1); }
-  50%  { transform: translate(-50px, -45px) scale(1.05); }
-  100% { transform: translate(30px, -65px) scale(0.94); }
+  50%  { transform: translate(-65px, -55px) scale(1.08); }
+  100% { transform: translate(45px, -80px) scale(0.92); }
 }
 
 @keyframes floatOrb3 {
-  0%   { transform: translate(0, 0) scale(0.95); }
-  50%  { transform: translate(-40px, 40px) scale(1.1); }
-  100% { transform: translate(35px, -30px) scale(1); }
+  0%   { transform: translate(0, 0) scale(0.92); }
+  50%  { transform: translate(-50px, 50px) scale(1.15); }
+  100% { transform: translate(45px, -40px) scale(1); }
 }
 
 @keyframes floatOrb4 {
   0%   { transform: translate(0, 0) scale(1); }
-  50%  { transform: translate(35px, -45px) scale(1.07); }
-  100% { transform: translate(-25px, 35px) scale(0.92); }
+  50%  { transform: translate(45px, -55px) scale(1.1); }
+  100% { transform: translate(-35px, 45px) scale(0.9); }
 }
 
 @keyframes beamPulse {
-  0%   { opacity: 0.35; transform: scaleX(0.95); }
-  50%  { opacity: 0.85; transform: scaleX(1.05); }
-  100% { opacity: 0.35; transform: scaleX(0.95); }
+  0%   { opacity: 0.4; transform: scaleX(0.92); }
+  50%  { opacity: 1; transform: scaleX(1.04); }
+  100% { opacity: 0.4; transform: scaleX(0.92); }
+}
+
+/* ─── Awwwards 边框流光扫射动画 (Animated Border Beam) ─── */
+@keyframes borderGlowPulse {
+  0%, 100% {
+    border-color: rgba(99, 102, 241, 0.35);
+    box-shadow: 0 16px 40px -10px rgba(0, 0, 0, 0.5), 0 0 20px rgba(99, 102, 241, 0.15);
+  }
+  50% {
+    border-color: rgba(129, 140, 248, 0.65);
+    box-shadow: 0 20px 50px -10px rgba(0, 0, 0, 0.6), 0 0 32px rgba(129, 140, 248, 0.3);
+  }
+}
+
+.glow-border-card {
+  border: 1px solid rgba(99, 102, 241, 0.35);
+  animation: borderGlowPulse 6s ease-in-out infinite;
+  transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.glow-border-card:hover {
+  border-color: var(--accent-color);
+  box-shadow: 0 24px 60px -10px rgba(0, 0, 0, 0.7), 0 0 40px var(--accent-glow);
+  transform: translateY(-2px);
 }
 
 /* ─── 全局视图级联过渡与物理入场动画 (View Enter Physics) ─── */
 .view-enter-transition {
-  animation: viewSlideIn 0.36s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  animation: viewSlideIn 0.42s cubic-bezier(0.16, 1, 0.3, 1) forwards;
   will-change: opacity, transform;
 }
 
 @keyframes viewSlideIn {
   from {
     opacity: 0;
-    transform: translateY(12px) scale(0.995);
+    transform: translateY(16px) scale(0.992);
   }
   to {
     opacity: 1;
@@ -259,16 +298,16 @@ html, body {
 }
 
 /* ─── 级联卡片错峰渐入动画 (Staggered Reveal) ─── */
-.stagger-item-1 { animation: cardSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.00s both; }
-.stagger-item-2 { animation: cardSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.04s both; }
-.stagger-item-3 { animation: cardSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.08s both; }
-.stagger-item-4 { animation: cardSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.12s both; }
-.stagger-item-5 { animation: cardSlideUp 0.32s cubic-bezier(0.16, 1, 0.3, 1) 0.16s both; }
+.stagger-item-1 { animation: cardSlideUp 0.36s cubic-bezier(0.16, 1, 0.3, 1) 0.00s both; }
+.stagger-item-2 { animation: cardSlideUp 0.36s cubic-bezier(0.16, 1, 0.3, 1) 0.05s both; }
+.stagger-item-3 { animation: cardSlideUp 0.36s cubic-bezier(0.16, 1, 0.3, 1) 0.10s both; }
+.stagger-item-4 { animation: cardSlideUp 0.36s cubic-bezier(0.16, 1, 0.3, 1) 0.15s both; }
+.stagger-item-5 { animation: cardSlideUp 0.36s cubic-bezier(0.16, 1, 0.3, 1) 0.20s both; }
 
 @keyframes cardSlideUp {
   from {
     opacity: 0;
-    transform: translateY(10px);
+    transform: translateY(14px);
   }
   to {
     opacity: 1;
@@ -374,17 +413,17 @@ html, body {
 input, textarea, select {
   font-family: inherit;
   background: var(--input-bg);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
   border: 1px solid var(--input-border);
   border-radius: 12px;
   color: var(--text-primary);
-  padding: 11px 16px;
+  padding: 10px 14px;
   font-size: 13px;
   outline: none;
   width: 100%;
-  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.04);
-  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.08);
+  transition: border-color 0.22s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.22s cubic-bezier(0.16, 1, 0.3, 1), background-color 0.22s ease;
 }
 
 input:focus, textarea:focus, select:focus {
@@ -392,11 +431,126 @@ input:focus, textarea:focus, select:focus {
   box-shadow: 0 0 0 3px var(--input-focus-glow), inset 0 1px 2px rgba(0,0,0,0.05);
 }
 
-/* ─── 苹果分段胶囊控制条 (Segmented Capsule Bar) ─── */
+/* ─── 现代化模式 Bento 网格选择器 (Mode Bento Grid Selector) ─── */
+.mode-bento-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  width: 100%;
+}
+
+.mode-bento-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--glass-surface-subtle);
+  border: 1px solid var(--glass-border-subtle);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: var(--text-secondary);
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  text-align: left;
+  transition: all 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.mode-bento-card:hover {
+  transform: translateY(-2px);
+  border-color: var(--glass-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  box-shadow: 0 8px 20px -6px rgba(0, 0, 0, 0.25);
+}
+
+.mode-bento-card:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.mode-bento-card.active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.22) 0%, rgba(139, 92, 246, 0.16) 100%);
+  border-color: var(--accent-color);
+  color: var(--text-primary);
+  box-shadow: 0 10px 24px -6px var(--accent-glow), inset 0 1px 0 0 rgba(255, 255, 255, 0.2);
+}
+
+.mode-bento-card-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 8px;
+}
+
+.mode-bento-icon-box {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-secondary);
+  flex-shrink: 0;
+  transition: all 0.24s ease;
+}
+
+.mode-bento-card.active .mode-bento-icon-box {
+  background: var(--accent-gradient);
+  color: #ffffff;
+  border-color: transparent;
+  box-shadow: 0 2px 8px var(--accent-glow);
+}
+
+.mode-bento-badge {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.mode-bento-card.active .mode-bento-badge {
+  background: rgba(99, 102, 241, 0.35);
+  color: #c7d2fe;
+}
+
+.mode-bento-title {
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: inherit;
+  white-space: nowrap;
+}
+
+.mode-bento-desc {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.4;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.mode-bento-card.active .mode-bento-desc {
+  color: var(--text-secondary);
+}
+
+/* ─── 苹果分段胶囊控制条 (Segmented Capsule Bar - 紧凑双选/三选) ─── */
 .segmented-capsule-group {
   display: flex;
   background: var(--glass-surface-subtle);
   backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
   border: 1px solid var(--glass-border-subtle);
   border-radius: 14px;
   padding: 4px;
@@ -412,18 +566,19 @@ input:focus, textarea:focus, select:focus {
   padding: 8px 12px;
   border-radius: 10px;
   font-size: 12px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-secondary);
   border: none;
   background: transparent;
   cursor: pointer;
   transition: all 0.24s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
 }
 
 .segmented-capsule-item.active {
   background: var(--accent-gradient);
   color: #ffffff;
-  font-weight: 600;
+  font-weight: 700;
   box-shadow: 0 4px 12px var(--accent-glow);
 }
 
@@ -549,8 +704,8 @@ button {
   align-items: stretch;
   flex: 1;
 }
-.two-col-left  { flex: 1.1; min-width: 0; max-width: 480px; }
-.two-col-right { flex: 1.5; min-width: 0; }
+.two-col-left  { flex: 1.15; min-width: 440px; max-width: 530px; }
+.two-col-right { flex: 1.85; min-width: 0; }
 
 .settings-grid {
   display: grid;
@@ -696,3 +851,38 @@ button {
     gap: 12px;
   }
 }
+
+/* ─── AI 启发发散骨架屏动效 (Direction Skeleton Shimmer) ─── */
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.direction-skeleton-card {
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: var(--glass-surface-subtle);
+  border: 1px dashed var(--glass-border);
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-shimmer-bar {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0.03) 0%,
+    rgba(99, 102, 241, 0.16) 50%,
+    rgba(255, 255, 255, 0.03) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.8s infinite ease-in-out;
+  border-radius: 6px;
+}
+

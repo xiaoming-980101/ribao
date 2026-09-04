@@ -76,13 +76,19 @@ export async function callChatCompletion({
   timeoutMs = UPSTREAM_TIMEOUT_MS
 }) {
   let response;
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${apiKey}`
+  };
+  if (isOpenRouterApiUrl(apiUrl)) {
+    headers['HTTP-Referer'] = 'https://deeix.com';
+    headers['X-Title'] = 'Winner Daily';
+  }
+
   try {
     response = await fetch(buildUpstreamUrl(apiUrl, 'chat/completions'), {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
+      headers,
       body: JSON.stringify({
         model: model || DEFAULT_AI_MODEL,
         messages: [

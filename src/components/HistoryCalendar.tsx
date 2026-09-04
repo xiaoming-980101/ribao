@@ -494,7 +494,7 @@ export default function HistoryCalendar({
         )}
 
         <div style={{ display: 'flex', gap: '16px', alignItems: 'center' }}>
-          {/* 🌟 核心新功能：一键导入任务日志 Excel 按钮 🌟 */}
+          {/* 核心新功能：一键导入任务日志 Excel 按钮 */}
           <button
             onClick={() => fileInputRef.current?.click()}
             className="clickable"
@@ -1044,7 +1044,7 @@ export default function HistoryCalendar({
         </div>
       </div>
 
-      {/* 🌟 visionOS 悬浮液态模态框：Excel 批量导入确认 🌟 */}
+      {/* visionOS 悬浮液态模态框：Excel 批量导入确认 */}
       {importModalOpen && (
         <div style={{
           position: 'fixed',

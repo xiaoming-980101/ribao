@@ -1,3 +1,5 @@
+import { stripThinkingProcess, isThinkingGarbage } from './modelUtils.js';
+
 export function getJobDisplayName(job, customJobName = '') {
   if (job === 'backend') return '后端开发工程师';
   if (job === 'frontend') return '前端开发工程师';
@@ -215,7 +217,8 @@ export function buildTaskSeed(userInput, job, mode, customJobName = '') {
   const currentMode = mode === 'idle' || mode === 'study' ? mode : 'task';
   const explicitInput = typeof userInput === 'string' ? userInput.trim() : '';
 
-  if (currentMode === 'task' && explicitInput) {
+  // 只要传入了明确的任务/方向输入（无论在哪个模式下），都必须优先采用该输入，绝不随机覆盖
+  if (explicitInput) {
     return `【${explicitInput}】`;
   }
 
@@ -255,9 +258,25 @@ export function buildDirectionsPrompt({
     ? `\n【重要：用户当前负责/维护的系统或平台】: 【${cleanPlatform}】\n请务必紧密围绕【${cleanPlatform}】这一系统的真实业务特性与当前 ${jobName} 的一线职责进行发挥发散，5 个切入点必须带有该系统的业务场景或直接出现该系统名称（例如涉及该系统的表单交互、数据接口、缓存、数据库查询、定时任务或状态流转等），严禁给出与该系统完全脱节的空泛建议！\n`
     : '';
 
-  const systemPrompt = `你是一名在企业一线工作的资深 ${jobName}。你熟知互联网真实各业务系统（如中台、支付、后台、商城、数据大盘等）的研发、维护、联调与调优实践，绝不堆砌空洞虚假的概念大词。`;
+  const systemPrompt = `你是一名在企业一线工作的资深 ${jobName}。你熟知互联网真实各业务系统（如中台、支付、后台、商城、数据大盘等）的研发、维护、联调与调优实践，绝不堆砌空洞虚假的概念大词。
+【重要规范】：严禁输出任何思考过程（如 Thinking Process 等）或额外说明，直接且仅输出合法的 JSON 数组。全程使用中文。`;
 
-  const userPrompt = `作为一名 ${jobName}，今天需要在【${cleanPlatform ? cleanPlatform + ' - ' : ''}${modeLabel}】状态下，整理 5 个真实接地气、供用户自由勾选的工作切入点。${platformInstruction}${historyContext}\n\n核心要求：\n1. 5 个方向必须高度接地气、真实可信${cleanPlatform ? `且贴合【${cleanPlatform}】业务` : ''}，绝不能出现"深度赋能"、"全链路闭环"等假大空八股文。\n2. 每个方向包含：\n   - 简明精准的标题（8 到 14 个字${cleanPlatform ? '，可带有系统名称' : ''}）\n   - 具体的实施要点摘要（20 到 35 个字，包含具体动作）\n   - 一个精炼的标签 tag（2 到 4 个字）\n3. 严格按 JSON 数组格式直接输出：\n[\n  { "id": "dir_1", "title": "...", "summary": "...", "tag": "..." },\n  { "id": "dir_2", "title": "...", "summary": "...", "tag": "..." },\n  { "id": "dir_3", "title": "...", "summary": "...", "tag": "..." },\n  { "id": "dir_4", "title": "...", "summary": "...", "tag": "..." },\n  { "id": "dir_5", "title": "...", "summary": "...", "tag": "..." }\n]`;
+  const userPrompt = `作为一名 ${jobName}，今天需要在【${cleanPlatform ? cleanPlatform + ' - ' : ''}${modeLabel}】状态下，整理 5 个真实接地气、供用户自由勾选的工作切入点。${platformInstruction}${historyContext}
+
+核心要求：
+1. 5 个方向必须高度接地气、真实可信${cleanPlatform ? `且贴合【${cleanPlatform}】业务` : ''}，绝不能出现"深度赋能"、"全链路闭环"等假大空八股文。
+2. 每个方向包含：
+   - 简明精准的标题（8 到 14 个字${cleanPlatform ? '，可带有系统名称' : ''}）
+   - 具体的实施要点摘要（20 到 35 个字，包含具体动作）
+   - 一个精炼的标签 tag（2 到 4 个字）
+3. 【严禁输出任何思考过程或英文草稿】，严格按 JSON 数组格式直接输出：
+[
+  { "id": "dir_1", "title": "...", "summary": "...", "tag": "..." },
+  { "id": "dir_2", "title": "...", "summary": "...", "tag": "..." },
+  { "id": "dir_3", "title": "...", "summary": "...", "tag": "..." },
+  { "id": "dir_4", "title": "...", "summary": "...", "tag": "..." },
+  { "id": "dir_5", "title": "...", "summary": "...", "tag": "..." }
+]`;
 
   return { systemPrompt, userPrompt };
 }
@@ -267,7 +286,9 @@ export function parseDirections(rawText, job, mode, customJobName = '', platform
 
   if (rawText && typeof rawText === 'string' && rawText.trim()) {
     try {
-      const cleaned = rawText
+      const stripped = stripThinkingProcess(rawText);
+      const textToParse = stripped || rawText;
+      const cleaned = textToParse
         .replace(/^[\s\S]*?\[/, '[')
         .replace(/\][\s\S]*$/, ']')
         .trim();
@@ -320,6 +341,7 @@ export function buildPrompts({
   userInput,
   job = 'frontend',
   customJobName = '',
+  tone = 'professional',
   mode = 'task',
   currentTitle = '',
   currentContent = '',
@@ -341,19 +363,66 @@ export function buildPrompts({
       .slice(0, 8)
       .map((log, i) => `  - 历史${i + 1}: ${log.title ? '[' + log.title + '] ' : ''}${(log.content || '').slice(0, 60)}`)
       .join('\n');
-    antiRepetitionNotice = `\n近期历史记录（避免重复）：\n${historySnippets}\n`;
+    antiRepetitionNotice = `\n近期历史记录（避免雷同）：\n${historySnippets}\n`;
   }
 
-  const systemPrompt = `你是一名严谨高效的资深 ${jobName}。你擅长把研发工作提炼为简明、客观、干练的工作事项记录，坚决杜绝日记式流水账（严禁出现"今天我花了时间"、"刚刚发现"、"挺省事的"等主观口语），字句精简有力。`;
+  // 根据排版详略模式 (tone) 定制深度与侧重点
+  const toneGuideline = (() => {
+    if (tone === 'geek') return '【极客深度风格】：突出底层技术架构、数据结构/算法/API设计、组件分层解耦与深层性能调优，内容必须包含硬核技术要点，字数控制在 90 到 160 字左右。';
+    if (tone === 'daily') return '【日常写实风格】：语言真实自然、接地气，展现一线真实工作流动线（排障定位 -> 细节处理 -> 协同走查），字数控制在 60 到 100 字左右。';
+    if (tone === 'concise') return '【简明干练风格】：敏捷汇报风格，去粗取精，提炼最核心的动作与成果，字数控制在 45 到 75 字左右。';
+    return '【专业严谨 (量化闭环) 风格】：全面体现"业务背景/技术痛点 -> 针对性落地工程方案 -> 可验证成效与量化闭环"（如耗时降低、帧率改善、内存稳定、测试用例覆盖），内容详实饱满，字数控制在 80 到 150 字左右。';
+  })();
+
+  // 根据工作状态 (mode) 补充场景侧重点
+  const modeGuideline = mode === 'study'
+    ? '【架构预研与技术调研】：重点体现技术方案调研对比、核心机制可行性验证或代码规范沉淀，突出技术深度与决策依据。'
+    : (mode === 'idle'
+      ? '【系统维护与性能调优】：重点体现历史痛点排查、交互细节调优、容错兜底加固与回归自测，突出系统稳定性。'
+      : '【迭代任务推进】：重点体现业务功能研发、前后端接口联调与核心流转端到端自测。');
+
+  const systemPrompt = `你是一名在企业一线工作的资深 ${jobName}。你擅长把工作任务与切入点提炼并展开为客观、专业、细节充实的标准工作事项记录，坚决杜绝日记式流水账（严禁出现"今天我花了时间"、"刚刚发现"、"挺好的"等主观口语），字句专业干练。
+【重要规范】：严禁输出任何思考过程（如 Thinking Process、Here's a thinking process 等）或说明，直接且仅输出指定格式的中文内容。`;
 
   let userPrompt;
 
   if (isDoubaoPromptMode) {
-    userPrompt = `请生成一段简明提示词模板，帮我把研发任务提炼成客观精练的工作记录。\n事项输入：${doubaoTasksText}\n要求：不要分序号，写成简练干练的一两句话（约 35 到 60 字），包含核心动作与自测状态，非日记体。\n仅输出提示词内容，无代码块。`;
+    userPrompt = `请生成一段简明提示词模板，帮我把研发任务提炼成客观精练的工作记录。\n事项输入：${doubaoTasksText}\n要求：不要分序号，写成简练干练的一两句话（约 45 到 75 字），包含核心动作与自测状态，非日记体。\n【严禁输出任何思考过程或英文说明】，仅输出提示词内容，无代码块。`;
   } else if (isTweakMode) {
-    userPrompt = `请对下面这段工作事项做精简优化，去除冗余废话和日记口吻，提炼为客观干练的事项记录：\n原标题：${String(currentTitle || '').trim() || '未填写'}\n原内容：${String(currentContent || '').trim()}\n\n要求：\n1. 语言客观干练、简明扼要，严禁写成日记流水账（严禁出现"今天我..."、"发现..."、"挺好"等口语）。\n2. 严禁分点（不带 1. 2. 3. 序号），写成连贯精炼的一两句话（控制在 35 到 65 个字左右）。\n3. 包含"核心处理动作 + 处理要点 + 自测/联调正常"。\n\n请严格按以下格式输出（不要有 Markdown 代码块）：\n标题：[8到14字事项名称]\n内容：[简明扼要的一两句话，35到65字左右]`;
+    userPrompt = `请对下面这段工作事项做精简优化与专业润色，提炼为客观干练的事项记录：\n原标题：${String(currentTitle || '').trim() || '未填写'}\n原内容：${String(currentContent || '').trim()}\n\n要求：\n1. 语言客观专业，去除冗余废话和日记口吻。\n2. 严禁分点（不带 1. 2. 3. 序号），写成连贯精炼的一两句话（控制在 55 到 95 个字左右）。\n3. 包含"核心处理动作 + 技术要点 + 验证自测闭环"。\n4. 【严禁输出任何思考过程或英文草稿】，直接按指定格式输出。\n\n请严格按以下格式输出（不要有 Markdown 代码块）：\n标题：[8到14字事项名称]\n内容：[专业干练的一两句话，55到95字左右]`;
   } else {
-    userPrompt = `请把以下工作任务，提炼为一份简明、干练、客观的标准工作事项记录：\n\n今日输入：${tasksText}\n\n核心规范：\n1. 【简明干练，拒绝日记体】：严禁写成"今天我做了什么"、"先做A再做B"等日记流水账！请使用客观干练的职场书面语（例如："配合后端联调订单结算接口，修复优惠券计算显示逻辑，自测下单流程正常。"）。\n2. 【长度适中，禁止分点】：不要分点列出（不带 1. 2. 序号），写成连贯精简的一两句话，字数严格控制在 40 到 80 个中文字左右。\n3. 【结构清晰】：客观表述"主要处理事项 + 关键细节/修复点 + 验证自测正常"。\n4. 【标题提炼】：提炼精准简洁的事项名称（8 到 14 个字）。\n5. 【必须保留具体名词】：用户输入中出现的模块名、接口名、功能名、技术名词等具体词汇，必须原样出现在输出中，严禁将用户写的具体词汇（如"用户中台登录接口"、"Redis缓存击穿"）泛化成"相关接口"、"缓存问题"等模糊表述，输出必须体现用户输入的核心具体词汇。\n${antiRepetitionNotice}\n请严格按以下格式输出（严禁包含代码块标记或额外说明）：\n标题：[精准事项标题]\n内容：[简明客观的一两句话，40到80字]`;
+    userPrompt = `请根据以下输入的工作任务或方向切入点，提炼并充实为一份专业、真实、有具体工程细节的标准工作事项记录：
+
+今日输入：${tasksText}
+
+核心规范：
+1. 【深度专业展开，坚决严禁机械复读】：
+   - 输入若为切入点卡片、简短摘要或任务种子，绝不能把输入内容照抄一遍并在末尾加几个字交差！
+   - 必须将输入作为工作主题，结合 ${jobName} 的真实一线工程经验，进行场景化与细节化的丰富展开（补充具体的业务上下文、采取的技术举措/方案细节、以及实际自测验证闭环），产出具有高技术含金量、令人信服的正式工作报告。
+
+2. 【反面敷衍案例警示（坚决禁止出现类似输出）】：
+   ❌ 劣质敷衍反例：
+   输入：针对大数据量图表卡顿，采用虚拟滚动与canvas绘制替换DOM节点，降低重绘开销。
+   劣质输出：针对宁波数据看板大数据量图表卡顿，采用虚拟滚动与canvas绘制替换DOM节点，降低重绘开销，验证渲染流畅度正常。（这属于纯照抄原句加几个字，毫无智力增量，坚决禁止！）
+
+3. 【优质专业示范（必须对齐此等专业深度与信息密度）】：
+   ✅ 优质专业范例：
+   围绕宁波数据看板核心监控大盘，排查并定位海量时序数据加载时的主线程渲染阻塞瓶颈；推进图表底层重构，设计可视区域虚拟滚动与 Canvas 离屏渲染替换高开销的 DOM 节点，优化数据下发与局部更新机制，显著降低页面重排重绘开销；自测多图表联动下交互帧率稳定在 55fps 以上，内存占用平稳，数据回显准确无误。
+
+4. 【保留核心具体名词】：
+   用户输入中的平台名、模块名、业务名、技术专有名词（如系统名称、核心组件、算法/协议）必须准确呈现在输出中，严禁泛化为"相关系统"、"某些问题"等空洞词。
+
+5. ${toneGuideline}
+6. ${modeGuideline}
+7. 【结构与排版规范】：
+   - 写成连贯紧凑的客观技术叙述，严禁分点（禁止出现 1. 2. 3. 等数字序号或顿号列表）。
+   - 严禁日记式口语流水账（严禁出现"今天我做了"、"花了时间"、"刚刚发现"等主观口语）。
+   - 标题简明精准（8 到 14 个字，体现平台与核心技术动作）。
+8. 【严禁输出思考过程】：严禁输出英文分析、思考草稿或说明，必须直接且仅输出指定格式的中文内容。
+${antiRepetitionNotice}
+请严格按以下格式输出（严禁包含代码块标记或额外说明）：
+标题：[精准事项标题]
+内容：[专业充实的客观工作记录]`;
   }
 
   return { systemPrompt, userPrompt };
@@ -363,14 +432,15 @@ export function parseGeneratedLog(rawText, defaultTitle = '', defaultContent = '
   if (!rawText || typeof rawText !== 'string' || !rawText.trim()) {
     return {
       title: defaultTitle || '日常开发与维护推进',
-      content: defaultContent || '推进前端页面交互与逻辑优化，排查局部细节并完成自测。'
+      content: defaultContent || '推进前端页面交互与逻辑优化，排查局部细节并完成自测。',
+      isInvalid: false
     };
   }
 
-  let text = rawText
-    .replace(/```[a-zA-Z]*\n?/g, '')
-    .replace(/```/g, '')
-    .trim();
+  const rawIsThinking = isThinkingGarbage(rawText);
+
+  // 1. 深度剥离思考链与 Markdown 标记
+  let text = stripThinkingProcess(rawText);
 
   let title = '';
   let extractedContent = '';
@@ -398,13 +468,27 @@ export function parseGeneratedLog(rawText, defaultTitle = '', defaultContent = '
   extractedContent = extractedContent
     .replace(/^(?:标题|事项名称|主题)[:：].*$/gm, '')
     .replace(/^[0-9]+[、.\s]+/gm, '')
-    // 逐行清理后以换行重新连接：直接删掉换行会把相邻两行的末尾与开头粘成一个词
+    // 逐行清理后以换行重新连接
     .split('\n')
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
     .join('\n')
     .replace(/^[""]|[""]$/g, '')
     .trim();
+
+  // 2. 如果原始文本是思考链且未提取出合法内容，或者提取结果命中思考链特征，标记为 isInvalid 触发拟人兜底
+  if (
+    (rawIsThinking && (!titleMatch || !contentMatch) && (!extractedContent || extractedContent.length < 10)) ||
+    isThinkingGarbage(extractedContent) ||
+    isThinkingGarbage(title)
+  ) {
+    console.warn('[aiPrompt] 提取到思考链垃圾信息或纯思考链输出，标记为 invalid 触发兜底:', { title, extractedContent: extractedContent.slice(0, 60) });
+    return {
+      title: defaultTitle || '日常开发与维护推进',
+      content: defaultContent || '推进相关业务功能与模块开发，核对交互细节并完成本地自测。',
+      isInvalid: true
+    };
+  }
 
   if (!extractedContent || extractedContent.length < 5) {
     extractedContent = defaultContent || '推进前端页面交互与逻辑优化，排查局部细节并完成自测。';
@@ -416,5 +500,9 @@ export function parseGeneratedLog(rawText, defaultTitle = '', defaultContent = '
 
   title = title.replace(/^["'*#\s[\]]+|["'*#\s[\]]+$/g, '').trim();
 
-  return { title, content: extractedContent };
+  if (isThinkingGarbage(title)) {
+    title = defaultTitle || '日常开发与维护推进';
+  }
+
+  return { title, content: extractedContent, isInvalid: false };
 }

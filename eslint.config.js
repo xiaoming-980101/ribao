@@ -12,7 +12,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 
 export default tseslint.config(
   {
-    ignores: ['dist/**', 'node_modules/**', 'backups/**', 'vite.config.ts']
+    ignores: ['dist/**', 'node_modules/**', 'backups/**', 'vite.config.ts', '*.cjs', 'deploy-direct.cjs']
   },
 
   js.configs.recommended,

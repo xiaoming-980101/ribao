@@ -104,6 +104,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
     selectedDirectionId,
     selectDirection,
     isFetchingDirections,
+    isOfflineDirections,
     fetchDirections,
     customDirectionNote,
     setCustomDirectionNote
@@ -596,6 +597,7 @@ export default function DailyGenerator({ appData, onSaveSuccess, showToast, onNa
             selectedDirectionId={selectedDirectionId}
             selectDirection={selectDirection}
             isFetchingDirections={isFetchingDirections}
+            isOfflineDirections={isOfflineDirections}
             fetchDirections={fetchDirections}
             customDirectionNote={customDirectionNote}
             setCustomDirectionNote={setCustomDirectionNote}

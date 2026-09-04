@@ -88,7 +88,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
 }) => {
   return (
     <div
-      className="liquid-glass-card two-col-right"
+      className="liquid-glass-card glow-border-card two-col-right"
       style={{
         padding: '26px 24px',
         display: 'flex',
@@ -362,11 +362,11 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
       <div
         style={{
           borderTop: '1px solid var(--glass-border-subtle)',
-          paddingTop: '16px',
+          paddingTop: '18px',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          gap: '12px',
+          gap: '14px',
           flexWrap: 'wrap'
         }}
       >
@@ -376,10 +376,11 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
             display: 'flex',
             alignItems: 'center',
             gap: '10px',
-            padding: '8px 14px',
+            padding: '9px 16px',
             borderRadius: '12px',
             background: 'var(--glass-surface-subtle)',
-            border: '1px solid var(--glass-border-subtle)'
+            border: '1px solid var(--glass-border-subtle)',
+            boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
           }}>
             <div
               style={{
@@ -387,19 +388,22 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
                 height: '10px',
                 borderRadius: '50%',
                 background: simLevel.color,
-                boxShadow: `0 0 10px ${simLevel.color}`
+                boxShadow: `0 0 10px ${simLevel.color}`,
+                flexShrink: 0
               }}
             />
-            <div style={{ fontSize: '12px' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>历史规范一致性指数: </span>
-              {isCheckingSimilarity ? (
-                <span style={{ fontWeight: '800', color: 'var(--text-muted)' }}>比对中...</span>
-              ) : (
-                <>
-                  <span style={{ fontWeight: '800', color: simLevel.color }}>{maxSimilarity}%</span>
-                  <span style={{ color: 'var(--text-muted)', marginLeft: '6px' }}>({simLevel.text})</span>
-                </>
-              )}
+            <div style={{ fontSize: '12px', lineHeight: 1.4 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ color: 'var(--text-secondary)' }}>历史规范一致性指数: </span>
+                {isCheckingSimilarity ? (
+                  <span style={{ fontWeight: '800', color: 'var(--text-muted)' }}>比对中...</span>
+                ) : (
+                  <>
+                    <span style={{ fontWeight: '800', color: simLevel.color }}>{maxSimilarity}%</span>
+                    <span style={{ color: 'var(--text-muted)' }}>({simLevel.text})</span>
+                  </>
+                )}
+              </div>
               {!isCheckingSimilarity && maxSimilarity > 0 && (
                 <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
                   参考基准日期: {similarDate}
@@ -412,7 +416,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
         )}
 
         {/* 控制按钮组 */}
-        <div style={{ display: 'flex', gap: '10px' }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
           {content && (
             <button
               onClick={handleTweak}
@@ -430,7 +434,8 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
                 alignItems: 'center',
                 gap: '8px',
                 cursor: saveStatus === 'saving' ? 'not-allowed' : 'pointer',
-                opacity: saveStatus === 'saving' ? 0.75 : 1
+                opacity: saveStatus === 'saving' ? 0.75 : 1,
+                boxShadow: '0 2px 8px rgba(0, 0, 0, 0.1)'
               }}
               title={aiSettings.aiEnabled && aiSettings.aiApiKey ? '使用当前大模型微调内容，降低重复率' : '本地重新洗牌内容，降低重复率'}
             >
@@ -441,7 +446,7 @@ export const PreviewPanel: React.FC<PreviewPanelProps> = ({
 
           <button
             onClick={handleSave}
-            className="clickable btn-shimmer-effect"
+            className="clickable glow-btn btn-shimmer-effect"
             disabled={saveStatus === 'saving'}
             style={{
               padding: '11px 22px',

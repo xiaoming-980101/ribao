@@ -107,6 +107,7 @@ export function useAIGeneration({
   const [directions, setDirections] = useState<DirectionOption[]>([]);
   const [selectedDirectionId, setSelectedDirectionId] = useState<string | null>(null);
   const [isFetchingDirections, setIsFetchingDirections] = useState<boolean>(false);
+  const [isOfflineDirections, setIsOfflineDirections] = useState<boolean>(false);
   const [customDirectionNote, setCustomDirectionNote] = useState<string>('');
 
   const loadAISettings = useCallback(() => {
@@ -179,6 +180,8 @@ export function useAIGeneration({
   const fetchDirections = useCallback(async (_forceOnline: boolean = false, targetPlatform?: string) => {
     if (mode !== 'idle' && mode !== 'study') return;
     setIsFetchingDirections(true);
+    setDirections([]); // 清空旧数据以展示骨架流光屏
+    setSelectedDirectionId(null);
 
     const platformToUse = targetPlatform !== undefined ? targetPlatform : customDirectionNote;
 
@@ -206,12 +209,19 @@ export function useAIGeneration({
       if (res.success && res.directions && res.directions.length > 0) {
         setDirections(res.directions);
         setSelectedDirectionId(res.directions[0].id);
+        setIsOfflineDirections(!!res.isOffline);
+      } else {
+        const local = generateLocalDirectionSuggestions(job, mode, customJobName, historyLogs, platformToUse);
+        setDirections(local);
+        if (local.length > 0) setSelectedDirectionId(local[0].id);
+        setIsOfflineDirections(true);
       }
     } catch (e) {
-      console.warn('获取方向建议异常，使用本地默认:', e);
+      console.warn('获取方向建议异常，使用本地场景库:', e);
       const local = generateLocalDirectionSuggestions(job, mode, customJobName, historyLogs, platformToUse);
       setDirections(local);
       if (local.length > 0) setSelectedDirectionId(local[0].id);
+      setIsOfflineDirections(true);
     } finally {
       setIsFetchingDirections(false);
     }
@@ -222,8 +232,6 @@ export function useAIGeneration({
     if (mode === 'idle' || mode === 'study') {
       fetchDirections();
     }
-    // 仅当模式/岗位变化时拉取：fetchDirections 闭包取渲染时最新密钥/日志/平台备注，
-    // 用户切换模型或改平台备注后由手动拉取触发，无需在此重跑。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, job, customJobName]);
 
@@ -332,13 +340,15 @@ export function useAIGeneration({
         content: item.content
       }));
 
-    // 组合输入：如果是无任务/技术预研模式，若选定了方向卡片，则将精准方向注入作为核心输入
+    // 组合输入：如果是无任务/技术预研模式，若选定了方向卡片或填写了平台，则将精准方向与平台注入作为核心输入
     let effectiveInput = userInput;
     if (mode === 'idle' || mode === 'study') {
+      const platNote = customDirectionNote.trim();
+      const noteStr = platNote ? `【负责系统/平台：${platNote}】` : '';
       if (selectedDirection) {
-        const platNote = customDirectionNote.trim();
-        const noteStr = platNote ? `【负责系统/平台：${platNote}】` : '';
         effectiveInput = `${noteStr}${selectedDirection.title}：${selectedDirection.summary}`;
+      } else if (platNote) {
+        effectiveInput = userInput.trim() ? `${noteStr}${userInput.trim()}` : `${noteStr}日常维护与系统优化`;
       }
     }
 
@@ -360,7 +370,7 @@ export function useAIGeneration({
     const combinedSignal = signal
       ? (typeof AbortSignal.any === 'function'
         ? AbortSignal.any([signal, timeoutSignal])
-        : signal) // 老环境无 AbortSignal.any 时退回仅外部信号
+        : signal)
       : timeoutSignal;
     const res = await fetch(`${BACKEND_URL}/api/ai/generate`, {
       method: 'POST',
@@ -389,7 +399,7 @@ export function useAIGeneration({
   };
 
   const handleGenerate = async (overrides: any = {}) => {
-    // 防重入：上一次生成仍在进行时忽略本次触发（Ctrl+Enter 连按、双击等场景）
+    // 防重入：上一次生成仍在进行时忽略本次触发
     if (generatingRef.current) {
       showToast('上一次生成仍在进行中，请稍候…', 'info');
       return;
@@ -421,9 +431,15 @@ export function useAIGeneration({
           result.title = directionTitle.length > 20 ? directionTitle.slice(0, 19) : directionTitle;
         }
         if (selectedDirection) {
-          const platPrefix = plat ? `围绕${plat}` : '推进';
-          const cleanSummary = selectedDirection.summary.replace(/^(针对.+?，)/, '');
-          result.content = `${platPrefix}开展${selectedDirection.title}，${cleanSummary}，本地测试与验证正常。`;
+          const platPrefix = plat ? `针对${plat}系统，` : '';
+          const cleanSummary = selectedDirection.summary.replace(/^(针对.+?，)/, '').replace(/。$/, '');
+          if (mode === 'study') {
+            result.content = `${platPrefix}深入调研${selectedDirection.title}技术方案，${cleanSummary}，完成关键特性可行性验证与技术笔记沉淀，自测运行稳定。`;
+          } else if (tone === 'daily') {
+            result.content = `${platPrefix}推进${selectedDirection.title}工作，${cleanSummary}，协同上下游完成全流程走查，自测功能表现正常。`;
+          } else {
+            result.content = `${platPrefix}推进${selectedDirection.title}重点治理，${cleanSummary}，有效消除系统隐患并提升运行效率，本地多场景回归测试通过，运行一切正常。`;
+          }
         }
         setTitle(result.title);
         setHours(result.hours);
@@ -481,7 +497,7 @@ export function useAIGeneration({
         });
 
         const results = await Promise.all(promises);
-        if (runSignal.aborted) return;   // 本轮已被取消（切换模型/卸载），丢弃过期结果
+        if (runSignal.aborted) return;
         const validResults = results.filter((r: any) => !r.aborted);
         setCompareResults(validResults);
 
@@ -517,7 +533,7 @@ export function useAIGeneration({
               showToast(`正在切换到降级模型 [${formatSelectedModel(modelToTry)}] 重试生成...`, 'info');
             }
             const resData = await requestGenerate(modelToTry, overrides, runSignal);
-            if (runSignal.aborted) return;    // 本轮已被取消，丢弃结果
+            if (runSignal.aborted) return;
             if (resData.success && resData.content) {
               setTitle(resData.title || '日常日志');
               setHours(8);
@@ -538,7 +554,7 @@ export function useAIGeneration({
               break;
             }
           } catch (error: any) {
-            if (runSignal.aborted || error?.name === 'AbortError') return;   // 用户取消/切换模型，静默退出
+            if (runSignal.aborted || error?.name === 'AbortError') return;
             lastError = error;
             const routeInfo: RouteInfo = error.routeInfo
               ? { ...error.routeInfo, requestedModel: error.routeInfo.requestedModel || modelToTry, status: 'error', statusCode: error.statusCode || error.routeInfo.statusCode, errorType: error.routeInfo.errorType || classifyGenerateError(error.message, error.statusCode) }
@@ -588,6 +604,7 @@ export function useAIGeneration({
     selectedDirection,
     selectDirection,
     isFetchingDirections,
+    isOfflineDirections,
     fetchDirections,
     customDirectionNote,
     setCustomDirectionNote

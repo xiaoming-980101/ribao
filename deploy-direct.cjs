@@ -11,7 +11,7 @@ const { Client } = require('ssh2');
 
 const APP_DIR = __dirname;
 const CONFIG_PATH = 'D:/ai/_ops/jd-cloud/secrets/connect.json';
-const DEPLOY_TARGET = '/opt/ribao';
+const DEPLOY_TARGET = '/opt/winner-daily';
 const PUBLIC_PORT = 7899;
 
 async function main() {
@@ -41,7 +41,7 @@ async function main() {
   // 3. 打包归档文件
   console.log('📦 [2/4] 生成项目核心发布归档包...');
   const timestamp = Date.now();
-  const archiveName = `ribao-release-${timestamp}.tar.gz`;
+  const archiveName = `winner-daily-release-${timestamp}.tar.gz`;
   const localArchive = path.join(APP_DIR, archiveName);
   const remoteArchive = `/tmp/${archiveName}`;
 
@@ -95,32 +95,46 @@ async function main() {
   console.log('🐳 [4/4] 远程执行容器更新与热重启...');
   const remoteCmd = `
 set -e
-echo ">>> 1. 解压更新目标目录..."
-mkdir -p ${DEPLOY_TARGET} /var/backups
-tar -xzf ${remoteArchive} -C ${DEPLOY_TARGET}
+echo ">>> 1. 备份现有数据与解压更新..."
+mkdir -p ${DEPLOY_TARGET} /var/backups /tmp/release-temp
+if [ -d "${DEPLOY_TARGET}" ]; then
+  cp -a ${DEPLOY_TARGET} /var/backups/winner-daily-$(date +%Y%m%d%H%M%S)
+fi
+if [ -f "${DEPLOY_TARGET}/db.json" ]; then
+  cp -a ${DEPLOY_TARGET}/db.json /tmp/db-pre-deploy.json
+fi
+
+tar -xzf ${remoteArchive} -C /tmp/release-temp
 rm -f ${remoteArchive}
+
+rsync -av --exclude="db.json" /tmp/release-temp/ ${DEPLOY_TARGET}/ || cp -a /tmp/release-temp/* ${DEPLOY_TARGET}/
+rm -rf /tmp/release-temp
+
+if [ ! -f "${DEPLOY_TARGET}/db.json" ]; then
+  if [ -f "/tmp/db-pre-deploy.json" ]; then
+    cp -a /tmp/db-pre-deploy.json ${DEPLOY_TARGET}/db.json
+  else
+    printf '{\\n  "users": {}\\n}\\n' > ${DEPLOY_TARGET}/db.json
+  fi
+fi
 
 cd ${DEPLOY_TARGET}
 
-echo ">>> 2. 重启 Docker 容器服务..."
-if docker compose version >/dev/null 2>&1; then
-    docker compose down || true
-    docker compose up -d --build
-elif command -v docker-compose >/dev/null 2>&1; then
-    docker-compose down || true
-    docker-compose up -d --build
-else
-    echo "未检测到 docker-compose，以 docker 单容器模式运行..."
-    docker stop ribao-app || true
-    docker rm ribao-app || true
-    docker build -t ribao:latest .
-    docker run -d --name ribao-app -p 3001:3001 -v ${DEPLOY_TARGET}/db.json:/app/db.json ribao:latest
-fi
+echo ">>> 2. 重建并启动 Docker 容器服务..."
+docker build -t winner-daily:latest .
+docker rm -f winner-daily >/dev/null 2>&1 || true
+docker run -d \\
+  --name winner-daily \\
+  --restart always \\
+  -p 127.0.0.1:3001:3001 \\
+  -v ${DEPLOY_TARGET}/db.json:/app/db.json \\
+  winner-daily:latest
 
-echo ">>> 3. 等待容器稳定并进行冒烟检查..."
-sleep 4
+echo ">>> 3. Nginx 热重载与冒烟检查..."
+sleep 3
+nginx -t && (nginx -s reload || systemctl reload nginx)
 curl -sI http://127.0.0.1:3001/api/data | head -n 1 || true
-docker ps | grep ribao || true
+docker ps | grep winner-daily || true
 echo ">>> 部署执行成功！"
 `;
 

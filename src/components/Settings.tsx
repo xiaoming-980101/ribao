@@ -337,7 +337,9 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
               <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>事项排版详略模式</label>
               <select value={tone} onChange={(e) => setTone(e.target.value)}>
                 <option value="professional">专业严谨型 (量化闭环，描述详实)</option>
-                <option value="daily">日常写实型 (工作流记录)</option>
+                <option value="geek">极客深度型 (技术细节，底层原理)</option>
+                <option value="daily">日常写实型 (工作流记录，平实自然)</option>
+                <option value="concise">简明干练型 (敏捷汇报，精炼有核)</option>
               </select>
             </div>
 
@@ -463,7 +465,7 @@ export default function Settings({ appData, onSaveSuccess, showToast }: Settings
                   />
                 </div>
 
-                {/* 🌟 核心：支持搜索与下拉选择的大模型选择器 🌟 */}
+                {/* 核心：支持搜索与下拉选择的大模型选择器 */}
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', position: 'relative' }} ref={dropdownRef}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <label style={{ fontSize: '12px', fontWeight: '700', color: 'var(--text-secondary)' }}>

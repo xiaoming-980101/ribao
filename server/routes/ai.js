@@ -3,10 +3,13 @@ import { readDB } from '../db.js';
 import { authMiddleware } from '../middleware/auth.js';
 import {
   isSafetyPlaceholder,
+  stripThinkingProcess,
+  isThinkingGarbage,
   extractRouteInfoFromErrorData,
   classifyGenerateError,
   createGenerateError,
-  extractRouteInfoFromApiData
+  extractRouteInfoFromApiData,
+  extractResponseText
 } from '../utils/modelUtils.js';
 import {
   getJobDisplayName,
@@ -71,12 +74,11 @@ router.post('/directions', async (req, res) => {
     return res.json({ success: true, directions: localDirections(), isOffline: true });
   }
 
-  const message = result.data.choices?.[0]?.message;
-  const content = message?.content || message?.reasoning || '';
+  const { rawText } = extractResponseText(result.data);
 
   res.json({
     success: true,
-    directions: parseDirections(content, cfg.job, mode, cfg.customJobName, platform),
+    directions: parseDirections(rawText, cfg.job, mode, cfg.customJobName, platform),
     isOffline: false
   });
 });
@@ -147,25 +149,50 @@ router.post('/generate', async (req, res) => {
 
     const apiData = result.data;
     const routeInfo = extractRouteInfoFromApiData(apiData, cfg.model);
-    const contentVal = apiData.choices?.[0]?.message?.content;
-    const rawText = typeof contentVal === 'string' ? contentVal.trim() : '';
+    const { rawText } = extractResponseText(apiData);
+    const strippedText = stripThinkingProcess(rawText);
 
-    if (!rawText || rawText.length < 10 || isSafetyPlaceholder(rawText)) {
+    if (!rawText || rawText.length < 5 || isSafetyPlaceholder(rawText)) {
       console.warn('[ai] 上游返回空响应或安全占位符，切换本地拟人引擎生成');
       const effectiveInput = userInput || buildTaskSeed('', cfg.job, mode, cfg.customJobName);
+      const cleanSeed = effectiveInput.replace(/^[【“]|[”】]$/g, '');
+      let defaultTitle = '';
+      if (cleanSeed.includes('：')) defaultTitle = cleanSeed.split('：')[0].trim();
+      else if (cleanSeed.includes(':')) defaultTitle = cleanSeed.split(':')[0].trim();
+      else defaultTitle = cleanSeed.slice(0, 14);
+      if (!defaultTitle) defaultTitle = cfg.job === 'frontend' ? '前端页面交互与逻辑优化' : '日常开发与维护推进';
+
       return res.json({
         success: true,
-        title: cfg.job === 'frontend' ? '前端页面交互与逻辑优化' : '日常开发与维护推进',
-        content: `今天主要推进了${effectiveInput.replace(/^[【“]|[”】]$/g, '')}相关工作，核对并处理了部分细节与边界交互，在本地各场景跑了一遍自测，运行一切正常。`,
+        title: defaultTitle,
+        content: `今天主要推进了${cleanSeed}相关工作，核对并处理了部分细节与边界交互，在本地各场景跑了一遍自测，运行一切正常。`,
         routeInfo: { ...routeInfo, isFallback: true }
       });
     }
 
     if (isDoubaoPromptMode) {
-      return res.json({ success: true, title: '复制提示词到豆包生成', content: rawText, routeInfo });
+      return res.json({ success: true, title: '复制提示词到豆包生成', content: strippedText || rawText, routeInfo });
     }
 
     const parsedLog = parseGeneratedLog(rawText, currentTitle, currentContent);
+    if (parsedLog.isInvalid || isThinkingGarbage(parsedLog.content) || isThinkingGarbage(parsedLog.title)) {
+      console.warn('[ai] 提取结果命中思考链垃圾或解析异常，切换本地拟人引擎兜底');
+      const effectiveInput = userInput || buildTaskSeed('', cfg.job, mode, cfg.customJobName);
+      const cleanSeed = effectiveInput.replace(/^[【“]|[”】]$/g, '');
+      let defaultTitle = '';
+      if (cleanSeed.includes('：')) defaultTitle = cleanSeed.split('：')[0].trim();
+      else if (cleanSeed.includes(':')) defaultTitle = cleanSeed.split(':')[0].trim();
+      else defaultTitle = cleanSeed.slice(0, 14);
+      if (!defaultTitle) defaultTitle = cfg.job === 'frontend' ? '前端页面交互与逻辑优化' : '日常开发与维护推进';
+
+      return res.json({
+        success: true,
+        title: defaultTitle,
+        content: `今天主要推进了${cleanSeed}相关工作，核对并处理了部分细节与边界交互，在本地各场景跑了一遍自测，运行一切正常。`,
+        routeInfo: { ...routeInfo, isFallback: true }
+      });
+    }
+
     res.json({ success: true, title: parsedLog.title, content: parsedLog.content, routeInfo });
   } catch (error) {
     console.error('[ai] 在线生成请求失败:', error.message);
@@ -260,7 +287,9 @@ ${formattedLogsText}
     });
   }
 
-  res.json({ success: true, report: (result.data.choices?.[0]?.message?.content || '').trim() });
+  const rawReport = (result.data.choices?.[0]?.message?.content || '').trim();
+  const cleanReport = stripThinkingProcess(rawReport) || rawReport;
+  res.json({ success: true, report: cleanReport });
 });
 
 export default router;
