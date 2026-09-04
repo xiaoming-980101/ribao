@@ -12,7 +12,8 @@
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"server.js\"",
-    "test": "vitest run"
+    "test": "vitest run",
+    "deploy:jd": "node deploy-direct.cjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
